@@ -1,11 +1,19 @@
 "use client"
 
-import { useState } from "react"
-import { appSettings, availableModels } from "@/lib/data"
+import { useState, useEffect, useCallback } from "react"
+import { appSettings } from "@/lib/data"
+
+type OpenRouterModel = { id: string; name: string; description?: string }
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState(structuredClone(appSettings))
   const [saved, setSaved] = useState(false)
+  const [models, setModels] = useState<OpenRouterModel[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelError, setModelError] = useState("")
+
+  const updateGeneral = <K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) =>
+    setSettings((s) => ({ ...s, [key]: value }))
 
   const updateKalshi = <K extends keyof typeof settings.venueKeys.kalshi>(key: K, value: (typeof settings.venueKeys.kalshi)[K]) =>
     setSettings((s) => ({ ...s, venueKeys: { ...s.venueKeys, kalshi: { ...s.venueKeys.kalshi, [key]: value } } }))
@@ -19,10 +27,37 @@ export default function SettingsPage() {
   const updateReview = <K extends keyof typeof settings.pairReview>(key: K, value: (typeof settings.pairReview)[K]) =>
     setSettings((s) => ({ ...s, pairReview: { ...s.pairReview, [key]: value } }))
 
+  const fetchModels = useCallback(async () => {
+    const key = settings.openrouterApiKey
+    if (!key) return
+    setLoadingModels(true)
+    setModelError("")
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/models", {
+        headers: { Authorization: `Bearer ${key}` },
+      })
+      if (!res.ok) throw new Error(`OpenRouter returned ${res.status}`)
+      const json = await res.json()
+      setModels(json.data ?? [])
+      if (!json.data?.length) setModelError("No models returned")
+    } catch (e) {
+      setModelError((e as Error).message)
+      setModels([])
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [settings.openrouterApiKey])
+
+  useEffect(() => {
+    if (settings.openrouterApiKey) fetchModels()
+  }, []) // only on mount — user clicks refresh to re-fetch
+
   const handleSave = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
+
+  const modelOptions = models.map((m) => ({ value: m.id, label: m.name || m.id }))
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-8">
@@ -78,7 +113,28 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      <Section title="AI Pair Review" subtitle="Configure which models review each leg and how pairs are batched">
+      <Section title="AI Pair Review" subtitle="Configure models, batching, and review prompts">
+        <div className="mb-5 pb-5 border-b border-border">
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <TextInput
+                label="OpenRouter API Key"
+                value={settings.openrouterApiKey}
+                onChange={(v) => updateGeneral("openrouterApiKey", v)}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={fetchModels}
+              disabled={!settings.openrouterApiKey || loadingModels}
+              className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-surface border border-border text-muted hover:text-gray-200 hover:border-accent transition-colors disabled:opacity-40"
+            >
+              {loadingModels ? "Loading..." : "Refresh Models"}
+            </button>
+          </div>
+          <p className="text-xs text-muted mt-1">Required to load available models. Enter your key and click Refresh.</p>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-3">
             <div className="flex items-center gap-2 mb-2">
@@ -86,7 +142,14 @@ export default function SettingsPage() {
               <span className="text-sm font-semibold text-gray-200">Leg A Review Model</span>
               <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">Kalshi</span>
             </div>
-            <ModelSelect value={settings.pairReview.legAModel} onChange={(v) => updateReview("legAModel", v)} />
+            <ModelSelect
+              value={settings.pairReview.legAModel}
+              onChange={(v) => updateReview("legAModel", v)}
+              options={modelOptions}
+              loading={loadingModels}
+              error={modelError}
+              hasKey={!!settings.openrouterApiKey}
+            />
             <p className="text-xs text-muted">Reviews the Kalshi-side of each pair — evaluates spread feasibility, liquidity depth, and execution risk.</p>
           </div>
           <div className="space-y-3">
@@ -95,7 +158,14 @@ export default function SettingsPage() {
               <span className="text-sm font-semibold text-gray-200">Leg B Review Model</span>
               <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">Polymarket</span>
             </div>
-            <ModelSelect value={settings.pairReview.legBModel} onChange={(v) => updateReview("legBModel", v)} />
+            <ModelSelect
+              value={settings.pairReview.legBModel}
+              onChange={(v) => updateReview("legBModel", v)}
+              options={modelOptions}
+              loading={loadingModels}
+              error={modelError}
+              hasKey={!!settings.openrouterApiKey}
+            />
             <p className="text-xs text-muted">Reviews the Polymarket-side — assesses CLOB liquidity, fill probability, and adverse selection risk.</p>
           </div>
         </div>
@@ -203,14 +273,46 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   )
 }
 
-function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ModelSelect({ value, onChange, options, loading, error, hasKey }: {
+  value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; loading: boolean; error: string; hasKey: boolean
+}) {
+  if (!hasKey) {
+    return (
+      <div className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-muted italic">
+        Enter OpenRouter API key above and click Refresh
+      </div>
+    )
+  }
+  if (loading) {
+    return (
+      <div className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-muted">
+        Loading models...
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="w-full bg-surface border border-red-500/40 rounded-lg px-3 py-2 text-sm text-red-400">
+        {error}
+      </div>
+    )
+  }
+  if (!options.length) {
+    return (
+      <div className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-muted italic">
+        No models loaded
+      </div>
+    )
+  }
+
   return (
     <select
       className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-gray-200 outline-none focus:border-accent"
       value={value}
       onChange={(e) => onChange(e.target.value)}
     >
-      {availableModels.map((m) => <option key={m} value={m}>{m}</option>)}
+      <option value="">Select a model...</option>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
 }

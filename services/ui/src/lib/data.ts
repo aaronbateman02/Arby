@@ -144,18 +144,8 @@ export const strategiesByPeriod: Record<string, typeof strategies> = {
 
 export type Bundle = (typeof bundles)[number]
 
-export const availableModels = [
-  "GPT-4o",
-  "GPT-4o-mini",
-  "Claude 3.5 Sonnet",
-  "Claude 3 Opus",
-  "Gemini 2.0 Flash",
-  "Gemini 2.0 Pro",
-  "Llama 3.1 405B",
-  "Mistral Large 2",
-]
-
 export const appSettings = {
+  openrouterApiKey: "",
   venueKeys: {
     kalshi: { email: "trader@arby.com", keyId: "ak_••••••••", privateKey: "~/.ssh/kalshi_ingestion_private_key.txt" },
     polymarket: { apiKey: "pm_••••••••", walletPrivateKey: "~/.ssh/polymarket_wallet_private_key.txt", walletAddress: "0x742d35Cc6634C0532925a3b844Bc4" },
@@ -172,8 +162,8 @@ export const appSettings = {
     metricsPort: 8086,
   },
   pairReview: {
-    legAModel: "GPT-4o",
-    legBModel: "Claude 3.5 Sonnet",
+    legAModel: "",
+    legBModel: "",
     batchSize: 25,
     confidenceThreshold: 0.85,
     autoApproveAboveThreshold: true,
