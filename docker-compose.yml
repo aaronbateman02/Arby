@@ -1,0 +1,50 @@
+services:
+  polybot:
+    build: .
+    container_name: arby-polybot
+    restart: unless-stopped
+    env_file: [".env"]
+    ports: ["8087:8086"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: arby-postgres
+    restart: unless-stopped
+    shm_size: 1g
+    environment:
+      POSTGRES_DB: arby
+      POSTGRES_USER: arby
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - arby_postgres_data:/var/lib/postgresql/data
+    ports: ["5435:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arby -d arby"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: arby-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - arby_redis_data:/data
+    ports: ["6381:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  arby_postgres_data:
+  arby_redis_data:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt

@@ -1,0 +1,510 @@
+# ============================================================
+# PolyBot — Docker Compose (US Control Plane)
+# Host: t3.medium, Amazon Linux 2
+# Domain: polybot.nostrabotus.com
+# ============================================================
+#
+# Usage:
+#   Start infrastructure only:      docker compose up -d nats postgres redis
+#   Start all services:             docker compose --profile services up -d
+#   Rebuild a single service:       docker compose up -d --build <service-name>
+#   View logs:                      docker compose logs -f <service-name>
+#   Run migrations:                 docker compose run --rm migrate
+#
+
+networks:
+  polybot:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  nats_data:
+  redis_data:
+  nginx_logs:
+  model_cache:
+
+# ============================================================
+# INFRASTRUCTURE
+# ============================================================
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL with pgvector
+  # ----------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: polybot-postgres
+    restart: unless-stopped
+    # 1 GiB /dev/shm so pgvector HNSW index builds (and large parallel scans /
+    # hash joins) don't OOM on the default 64 MiB. The host has plenty of RAM.
+    shm_size: 1g
+    environment:
+      POSTGRES_DB: polybot
+      POSTGRES_USER: polybot
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - polybot
+    ports:
+      - "5434:5432"                # exposed publicly; auth via scram-sha-256, SG must allow 5434
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polybot -d polybot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # Database migrations (run-once, then exit)
+  # ----------------------------------------------------------
+  migrate:
+    image: flyway/flyway:10-alpine
+    container_name: polybot-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/flyway/sql:ro
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/polybot
+      FLYWAY_USER: polybot
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+    # Flyway doesn't natively support _FILE env vars; read the secret inline
+    entrypoint:
+      - sh
+      - -c
+      - 'FLYWAY_PASSWORD=$(cat /run/secrets/postgres_password) flyway migrate'
+    secrets:
+      - postgres_password
+    networks:
+      - polybot
+    profiles:
+      - migrate                     # run explicitly: docker compose --profile migrate run --rm migrate
+
+  # ----------------------------------------------------------
+  # NATS JetStream (event bus)
+  # ----------------------------------------------------------
+  nats:
+    image: nats:2.10-alpine
+    container_name: polybot-nats
+    restart: unless-stopped
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--cluster_name=polybot"
+    volumes:
+      - nats_data:/data
+    networks:
+      - polybot
+    ports:
+      - "127.0.0.1:4222:4222"      # client connections (localhost only)
+      - "127.0.0.1:8222:8222"      # monitoring HTTP endpoint
+    healthcheck:
+      test: ["CMD", "nats-server", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------
+  # Redis (hot state: order book snapshots, leg price cache)
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: polybot-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - polybot
+    ports:
+      - "127.0.0.1:6380:6379"      # localhost only; host 6379 used by nostrabotus
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ----------------------------------------------------------
+  # nginx (TLS termination + reverse proxy + static UI)
+  # ----------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: polybot-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/ui/dist:/usr/share/nginx/html:ro   # built UI static assets
+      - nginx_logs:/var/log/nginx
+    networks:
+      - polybot
+    ports:
+      - "8090:80"                # legacy UI — still serves the subdomains (strategies./matching./...)
+    depends_on:
+      - reporting
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # ui-v2 — Next.js dashboard served at polybot.nostrabotus.com
+  # PH-style layout. Self-contained reverse proxy to reporting for /api/*.
+  # ----------------------------------------------------------
+  ui-v2:
+    build:
+      context: ./services/ui-v2
+      dockerfile: Dockerfile
+    container_name: polybot-ui-v2
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      POLYBOT_API_URL: http://reporting:8086
+    networks:
+      - polybot
+    depends_on:
+      - reporting
+    profiles:
+      - services
+
+  ui-v2-nginx:
+    image: nginx:1.27-alpine
+    container_name: polybot-ui-v2-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/ui-v2.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - polybot
+    ports:
+      - "8091:80"                # proxied from nostrabotus host nginx (polybot.nostrabotus.com)
+    depends_on:
+      - ui-v2
+      - reporting
+    profiles:
+      - services
+
+
+  # ----------------------------------------------------------
+  # Certbot — TLS certificate issuance and auto-renewal
+  # Initial cert: run scripts/init-letsencrypt.sh once.
+  # After that this service renews automatically every 12 h.
+  # ----------------------------------------------------------
+  # certbot not needed here — TLS is handled by the nostrabotus nginx reverse proxy
+
+# ============================================================
+# PLATFORM SERVICES
+# All services use profile: services
+# ============================================================
+
+  # ----------------------------------------------------------
+  # Discovery Service (ingestion-v2/discovery — REST market discovery only)
+  # ----------------------------------------------------------
+  discovery:
+    build:
+      context: ./services/ingestion-v2
+      dockerfile: cmd/discovery/Dockerfile
+    container_name: polybot-discovery
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      REDIS_ADDR: redis:6379
+      KALSHI_KEY_ID_FILE: /run/secrets/kalshi_ingestion_key_id
+      KALSHI_PRIVATE_KEY_FILE: /run/secrets/kalshi_ingestion_private_key
+    secrets:
+      - postgres_dsn
+      - kalshi_ingestion_key_id
+      - kalshi_ingestion_private_key
+    ports:
+      - "9100:9100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Pricing Service (ingestion-v2/pricing — WS+REST driven by strategies)
+  # ----------------------------------------------------------
+  pricing:
+    build:
+      context: ./services/ingestion-v2
+      dockerfile: cmd/pricing/Dockerfile
+    container_name: polybot-pricing
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      REDIS_ADDR: redis:6379
+      KALSHI_KEY_ID_FILE: /run/secrets/kalshi_ingestion_key_id
+      KALSHI_PRIVATE_KEY_FILE: /run/secrets/kalshi_ingestion_private_key
+    secrets:
+      - postgres_dsn
+      - kalshi_ingestion_key_id
+      - kalshi_ingestion_private_key
+    ports:
+      - "9101:9101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Matching Engine (Python — v2 batch pipeline)
+  # ----------------------------------------------------------
+  matching:
+    build:
+      context: ./services/matching
+      dockerfile: Dockerfile
+    container_name: polybot-matching
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+    volumes:
+      - model_cache:/root/.cache/torch
+    secrets:
+      - postgres_dsn
+      - openai_api_key
+      - gemini_api_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Polymarket CLOB Order Proxy (Python / py-clob-client-v2)
+  # Signs and forwards BUY orders to Polymarket via SOCKS5 proxy.
+  # ----------------------------------------------------------
+  polymarket-proxy:
+    build:
+      context: ./services/proxy-py
+      dockerfile: Dockerfile
+    container_name: polybot-polymarket-proxy
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      POLYMARKET_PRIVATE_KEY_FILE: /run/secrets/polymarket_wallet_private_key
+      POLYMARKET_DEPOSIT_WALLET: "0x8972EcB480932b4Bb09800E849Cda70951482283"
+      # PROXY_URL and DRY_RUN come from .env.runtime
+    secrets:
+      - polymarket_wallet_private_key
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Execution Service — Kalshi Agent (Go)
+  # ----------------------------------------------------------
+  execution:
+    build:
+      context: ./services/execution
+      dockerfile: Dockerfile
+    container_name: polybot-execution
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      KALSHI_KEY_ID_FILE: /run/secrets/kalshi_execution_key_id
+      KALSHI_PRIVATE_KEY_FILE: /run/secrets/kalshi_execution_private_key
+      PROXY_CLIENT_CERT_FILE: /run/secrets/proxy_client_cert
+      PROXY_CLIENT_KEY_FILE: /run/secrets/proxy_client_key
+      PROXY_CA_FILE: /run/secrets/proxy_ca
+      # KALSHI_BASE_URL and POLYMARKET_PROXY_URL come from .env.runtime
+      # mTLS files are optional in paper mode; required for live Polymarket routing.
+    secrets:
+      - postgres_dsn
+      - kalshi_execution_key_id
+      - kalshi_execution_private_key
+      - proxy_client_cert
+      - proxy_client_key
+      - proxy_ca
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      polymarket-proxy:
+        condition: service_started
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Reporting / Ledger Service (Go)
+  # ----------------------------------------------------------
+  reporting:
+    build:
+      context: ./services/reporting
+      dockerfile: Dockerfile
+    container_name: polybot-reporting
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      REPORTING_LISTEN_ADDR: ":8086"
+      JWT_SECRET_KEY_FILE: /run/secrets/jwt_secret_key
+      DASHBOARD_PASSWORD_HASH_FILE: /run/secrets/dashboard_password_hash
+      KALSHI_KEY_ID_FILE: /run/secrets/kalshi_ingestion_key_id
+      KALSHI_PRIVATE_KEY_FILE: /run/secrets/kalshi_ingestion_private_key
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      # POLYMARKET_WALLET_ADDRESS comes from .env.runtime
+    secrets:
+      - postgres_dsn
+      - jwt_secret_key
+      - dashboard_password_hash
+      - kalshi_ingestion_key_id
+      - kalshi_ingestion_private_key
+      - openai_api_key
+      - gemini_api_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - polybot
+    ports:
+      - "127.0.0.1:8086:8086"      # REST + WebSocket API for UI (localhost only, nginx proxies)
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Strategy: Cross-Market Arbitrage — Politics (Go)
+  # Same image as the sports variant; STRATEGY_ID picks the category-
+  # scoped config row in strategy_configs.
+  # ----------------------------------------------------------
+  strategy-arb-politics:
+    build:
+      context: ./strategies/strategy-arb
+      dockerfile: Dockerfile
+    container_name: polybot-strategy-arb-politics
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      REDIS_ADDR: redis:6379
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      STRATEGY_ID: arb-cross-market-politics-v1
+    secrets:
+      - postgres_dsn
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - polybot
+    profiles:
+      - services
+
+  # ----------------------------------------------------------
+  # Strategy: Cross-Market Arbitrage — Sports (Go)
+  # ----------------------------------------------------------
+  strategy-arb-sports:
+    build:
+      context: ./strategies/strategy-arb
+      dockerfile: Dockerfile
+    container_name: polybot-strategy-arb-sports
+    restart: unless-stopped
+    env_file: [".env.runtime"]
+    environment:
+      NATS_URL: nats://nats:4222
+      REDIS_ADDR: redis:6379
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+      STRATEGY_ID: arb-cross-market-sports-v1
+    secrets:
+      - postgres_dsn
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - polybot
+    profiles:
+      - services
+
+# ============================================================
+# SECRETS
+# Values are read from files injected by startup script
+# (sourced from local secret files at deploy time).
+# See scripts/inject-secrets.sh
+# ============================================================
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  postgres_dsn:
+    file: ./secrets/postgres_dsn.txt
+  kalshi_key_id:
+    file: ./secrets/kalshi_key_id.txt
+  kalshi_private_key:
+    file: ./secrets/kalshi_private_key.txt
+  kalshi_ingestion_key_id:
+    file: ./secrets/kalshi_ingestion_key_id.txt
+  kalshi_ingestion_private_key:
+    file: ./secrets/kalshi_ingestion_private_key.txt
+  kalshi_execution_key_id:
+    file: ./secrets/kalshi_execution_key_id.txt
+  kalshi_execution_private_key:
+    file: ./secrets/kalshi_execution_private_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+  jwt_secret_key:
+    file: ./secrets/jwt_secret_key.txt
+  dashboard_password_hash:
+    file: ./secrets/dashboard_password_hash.txt
+  polymarket_private_key:
+    file: ./secrets/polymarket_private_key.txt
+  polymarket_wallet_private_key:
+    file: ./secrets/polymarket_wallet_private_key.txt
+  proxy_client_cert:
+    file: ./secrets/proxy_client_cert.pem
+  proxy_client_key:
+    file: ./secrets/proxy_client_key.pem
+  proxy_ca:
+    file: ./secrets/proxy_ca.pem

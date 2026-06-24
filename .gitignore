@@ -1,0 +1,27 @@
+# Binaries
+/polybot
+*.exe
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+/secrets/
+.env
+*.pem
+
+# Data
+/data/
+
+# Dependencies
+/vendor/
+
+# Superpowers scratch
+/.superpowers/
