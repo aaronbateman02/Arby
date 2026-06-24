@@ -55,6 +55,8 @@
 | 2026-05-22 | Feat: Store raw LLM response text in llm_validations.raw_response_text; add model_evaluations table for cross-model replay; evaluate_model.py script to test any model against stored prompts and compare agreement rate. (commit ec90795) |
 | 2026-05-22 | Fix: pre_filters.py — removed 14-day resolution date window for non-sports categories; was blocking 94.7% of candidates (34k/36k pairs). Sports keeps 14-day window. First run queued 33,465 pairs for LLM review. (commit 33e4371) |
 | 2026-05-21 | Feat: LLM Rejected review tab added to MatchReview UI — browse all 22k+ AI-rejected candidates with search/category filter and ⚡ Re-evaluate button. New API: GET /api/matching/llm-rejections. (commit f537c6b) |
+| 2026-06-24 | Phase 1a: Arby monolith skeleton — Go module, config, DB, Redis, logging, metrics, event bus, auth, health, main entrypoint, Docker, tests. (commit be585e2) |
+| 2026-06-24 | Phase 1b: Ingestion module — config, price cache, Kalshi/Polymarket discovery REST clients, discovery scanner with event bus, Kalshi/Polymarket WS pricing clients, pricing manager with cache fan-out. (commit eb19dbd) |
 ---
 
 ## Decided — Platform Objective
