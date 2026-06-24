@@ -143,3 +143,98 @@ export const strategiesByPeriod: Record<string, typeof strategies> = {
 }
 
 export type Bundle = (typeof bundles)[number]
+
+export interface StrategyConfig {
+  minRoi: number
+  maxPositionsPerBundle: number
+  maxPositionDollars: number
+  minSpread: number
+  maxDailyExposure: number
+  cooldownMinutes: number
+  autoExecute: boolean
+  notifyOnMatch: boolean
+  maxDaysToResolution: number
+  enabled: boolean
+  paperMode: boolean
+}
+
+export interface MonitoredPair {
+  id: string
+  marketA: { title: string; venue: string; dir: string; price: number }
+  marketB: { title: string; venue: string; dir: string; price: number }
+  currentRoi: number
+  currentSpread: number
+  costPerShare: number
+  expiresIn: string
+  meetsCriteria: boolean
+  executed: boolean
+  estimatedProfit: number
+}
+
+export interface StrategyDetail {
+  id: string
+  name: string
+  type: string
+  description: string
+  status: "active" | "paused" | "disabled"
+  pausedReason?: string
+  config: StrategyConfig
+  stats: {
+    totalBundles: number
+    completedBundles: number
+    abortedBundles: number
+    totalPnL: number
+    winRate: number
+  }
+  monitoredPairs: MonitoredPair[]
+}
+
+const basePairs: MonitoredPair[] = [
+  { id: "pr-001", marketA: { title: "BTC > $120K in June?", venue: "Kalshi", dir: "BUY YES", price: 0.31 }, marketB: { title: "BTC > $120K in June?", venue: "Polymarket", dir: "BUY NO", price: 0.27 }, currentRoi: 4.0, currentSpread: 4.0, costPerShare: 0.58, expiresIn: "6d", meetsCriteria: true, executed: true, estimatedProfit: 40.00 },
+  { id: "pr-002", marketA: { title: "Will DOW hit 45K by July?", venue: "Kalshi", dir: "BUY YES", price: 0.42 }, marketB: { title: "Will DOW hit 45K by July?", venue: "Polymarket", dir: "BUY NO", price: 0.38 }, currentRoi: 3.8, currentSpread: 4.0, costPerShare: 0.80, expiresIn: "9d", meetsCriteria: true, executed: true, estimatedProfit: 30.40 },
+  { id: "pr-003", marketA: { title: "Fed cuts rates in Q3?", venue: "Kalshi", dir: "BUY YES", price: 0.65 }, marketB: { title: "Fed cuts rates in Q3?", venue: "Polymarket", dir: "BUY NO", price: 0.61 }, currentRoi: 3.5, currentSpread: 4.0, costPerShare: 1.26, expiresIn: "11d", meetsCriteria: true, executed: true, estimatedProfit: 44.10 },
+  { id: "pr-004", marketA: { title: "S&P 500 > 5600 EOM?", venue: "Kalshi", dir: "BUY YES", price: 0.48 }, marketB: { title: "S&P 500 > 5600 EOM?", venue: "Polymarket", dir: "BUY NO", price: 0.44 }, currentRoi: 3.2, currentSpread: 4.0, costPerShare: 0.92, expiresIn: "16d", meetsCriteria: true, executed: false, estimatedProfit: 29.44 },
+  { id: "pr-005", marketA: { title: "ETH ETF approved by Aug?", venue: "Kalshi", dir: "BUY YES", price: 0.55 }, marketB: { title: "ETH ETF approved by Aug?", venue: "Polymarket", dir: "BUY NO", price: 0.50 }, currentRoi: 5.0, currentSpread: 5.0, costPerShare: 1.05, expiresIn: "38d", meetsCriteria: true, executed: true, estimatedProfit: 52.50 },
+  { id: "pr-006", marketA: { title: "Apple > $250 by Sept?", venue: "Kalshi", dir: "BUY YES", price: 0.37 }, marketB: { title: "Apple > $250 by Sept?", venue: "Polymarket", dir: "BUY NO", price: 0.33 }, currentRoi: 4.0, currentSpread: 4.0, costPerShare: 0.70, expiresIn: "83d", meetsCriteria: true, executed: false, estimatedProfit: 28.00 },
+  { id: "pr-007", marketA: { title: "Lakers win NBA Finals 2026", venue: "Kalshi", dir: "BUY YES", price: 0.28 }, marketB: { title: "Lakers win NBA Finals 2026", venue: "Polymarket", dir: "BUY NO", price: 0.24 }, currentRoi: 4.5, currentSpread: 4.0, costPerShare: 0.52, expiresIn: "14d", meetsCriteria: true, executed: true, estimatedProfit: 23.40 },
+  { id: "pr-008", marketA: { title: "Chiefs win Super Bowl LXI", venue: "Kalshi", dir: "BUY YES", price: 0.35 }, marketB: { title: "Chiefs win Super Bowl LXI", venue: "Polymarket", dir: "BUY NO", price: 0.31 }, currentRoi: 4.2, currentSpread: 4.0, costPerShare: 0.66, expiresIn: "221d", meetsCriteria: true, executed: false, estimatedProfit: 27.72 },
+  { id: "pr-009", marketA: { title: "US GDP > 2% 2026?", venue: "Kalshi", dir: "BUY NO", price: 0.42 }, marketB: { title: "US GDP > 2% 2026?", venue: "Polymarket", dir: "BUY YES", price: 0.58 }, currentRoi: 2.8, currentSpread: 3.0, costPerShare: 1.00, expiresIn: "98d", meetsCriteria: false, executed: false, estimatedProfit: 28.00 },
+  { id: "pr-010", marketA: { title: "Oil > $90 by Dec?", venue: "Kalshi", dir: "BUY YES", price: 0.35 }, marketB: { title: "Oil > $90 by Dec?", venue: "Polymarket", dir: "BUY NO", price: 0.31 }, currentRoi: 4.0, currentSpread: 4.0, costPerShare: 0.66, expiresIn: "160d", meetsCriteria: true, executed: true, estimatedProfit: 26.40 },
+  { id: "pr-011", marketA: { title: "TSLA > $500 by Dec?", venue: "Kalshi", dir: "BUY NO", price: 0.55 }, marketB: { title: "TSLA > $500 by Dec?", venue: "Polymarket", dir: "BUY YES", price: 0.45 }, currentRoi: 3.7, currentSpread: 3.0, costPerShare: 1.00, expiresIn: "174d", meetsCriteria: true, executed: false, estimatedProfit: 37.00 },
+  { id: "pr-012", marketA: { title: "Barcelona win La Liga 2026/27", venue: "Kalshi", dir: "BUY YES", price: 0.22 }, marketB: { title: "Barcelona win La Liga 2026/27", venue: "Polymarket", dir: "BUY NO", price: 0.19 }, currentRoi: 5.2, currentSpread: 3.0, costPerShare: 0.41, expiresIn: "300d", meetsCriteria: false, executed: false, estimatedProfit: 21.32 },
+]
+
+function filterPairs(type: string): MonitoredPair[] {
+  switch (type) {
+    case "Sports":
+      return basePairs.filter(p => ["pr-007", "pr-008", "pr-012"].includes(p.id)).map(p => ({
+        ...p, meetsCriteria: p.id !== "pr-012", executed: p.id === "pr-007",
+      }))
+    case "Commodities":
+      return basePairs.filter(p => ["pr-010"].includes(p.id))
+    case "Macro":
+      return basePairs.filter(p => ["pr-003", "pr-009"].includes(p.id)).map(p => ({
+        ...p, meetsCriteria: p.id === "pr-003", executed: p.id === "pr-003",
+      }))
+    case "Event":
+      return basePairs.filter(p => ["pr-005", "pr-011"].includes(p.id)).map(p => ({
+        ...p, meetsCriteria: true, executed: p.id === "pr-005",
+      }))
+    default:
+      return basePairs.slice(0, 6).map(p => ({
+        ...p, meetsCriteria: true, executed: Math.random() > 0.5,
+      }))
+  }
+}
+
+const d: StrategyConfig = { minRoi: 3.0, maxPositionsPerBundle: 1, maxPositionDollars: 1000, minSpread: 2.0, maxDailyExposure: 5000, cooldownMinutes: 30, autoExecute: true, notifyOnMatch: true, maxDaysToResolution: 90, enabled: true, paperMode: false }
+
+export const strategyDetails: StrategyDetail[] = [
+  { id: "strat-sprd-capture", name: "Spread Capture v2", type: "Spread", description: "Captures price discrepancies between Kalshi and Polymarket on identical event markets. Our flagship strategy.", status: "active", config: { ...d, minRoi: 2.5, maxDailyExposure: 8000 }, stats: { totalBundles: 64, completedBundles: 56, abortedBundles: 5, totalPnL: 18720, winRate: 87 }, monitoredPairs: filterPairs("Spread") },
+  { id: "strat-event", name: "Event Driven", type: "Event", description: "Trades around specific binary events: earnings reports, FDA approvals, regulatory decisions. Higher ROI targets.", status: "active", config: { ...d, minRoi: 4.0, maxPositionDollars: 1500, maxDaysToResolution: 60 }, stats: { totalBundles: 38, completedBundles: 35, abortedBundles: 2, totalPnL: 18400, winRate: 92 }, monitoredPairs: filterPairs("Event") },
+  { id: "strat-macro", name: "Macro Arbitrage", type: "Macro", description: "Broader economic indicator trading: GDP, inflation, Fed funds rate. Longer time horizons, lower volume.", status: "active", config: { ...d, minRoi: 2.0, maxDaysToResolution: 180, cooldownMinutes: 60 }, stats: { totalBundles: 18, completedBundles: 14, abortedBundles: 3, totalPnL: 6200, winRate: 78 }, monitoredPairs: filterPairs("Macro") },
+  { id: "strat-commodity", name: "Commodity Arb", type: "Commodities", description: "Oil, gold, and commodity price prediction arbitrage. Medium confidence, wider spreads.", status: "active", config: { ...d, minRoi: 3.0, minSpread: 3.0, maxDailyExposure: 3000 }, stats: { totalBundles: 21, completedBundles: 13, abortedBundles: 6, totalPnL: 3240, winRate: 62 }, monitoredPairs: filterPairs("Commodities") },
+  { id: "strat-sports", name: "Sports Arbitrage", type: "Sports", description: "Cross-venue sports betting arbitrage. NBA, NFL, Soccer. Fast resolution, high frequency.", status: "active", config: { ...d, minRoi: 3.5, maxDailyExposure: 6000, cooldownMinutes: 15, maxDaysToResolution: 14 }, stats: { totalBundles: 42, completedBundles: 38, abortedBundles: 3, totalPnL: 12500, winRate: 90 }, monitoredPairs: filterPairs("Sports") },
+  { id: "strat-classic", name: "Classic Arbitrage", type: "Spread", description: "Original legacy strategy. Being phased out in favor of v2.", status: "paused", pausedReason: "Being deprecated — all pairs migrated to Spread Capture v2", config: { ...d, enabled: false, autoExecute: false }, stats: { totalBundles: 112, completedBundles: 89, abortedBundles: 18, totalPnL: 15200, winRate: 79 }, monitoredPairs: [] },
+  { id: "strat-experimental", name: "ML Correlation Finder", type: "Event", description: "Experimental strategy using ML to find non-obvious correlated markets. Paper only.", status: "disabled", config: { ...d, autoExecute: false, paperMode: true, enabled: false, maxDailyExposure: 1000 }, stats: { totalBundles: 8, completedBundles: 5, abortedBundles: 3, totalPnL: 850, winRate: 62 }, monitoredPairs: filterPairs("Event").slice(0, 3) },
+]
