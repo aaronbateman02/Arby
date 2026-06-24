@@ -144,6 +144,80 @@ export const strategiesByPeriod: Record<string, typeof strategies> = {
 
 export type Bundle = (typeof bundles)[number]
 
+export const defaultTypePrompts: Record<string, string> = {
+  Spread: `You are an expert prediction-market analyst identifying cross-venue arbitrage opportunities.
+
+Your task is to determine whether two binary markets resolve on the exact same real-world outcome.
+
+Key rules:
+- Both markets must reference the same event, scope, and time window
+- Check close dates: if they differ by more than 1 day, the pair is UNRELATED unless both explicitly reference the same scheduled date
+- Different numeric thresholds on the same metric = UNRELATED
+- Different named actors (people, companies, teams) = UNRELATED
+- EQUIVALENT: YES on A and YES on B pay out under the same result
+- INVERSE: YES on A = NO on B (requires exactly two possible outcomes)
+- UNRELATED: not the same event
+- Be conservative: when in doubt, return UNRELATED`,
+
+  Event: `You are an expert corporate-event analyst identifying cross-venue arbitrage opportunities.
+
+Your task is to determine whether two binary markets resolve on the exact same real-world corporate outcome (earnings, FDA approvals, regulatory decisions, product launches).
+
+Key rules:
+- Both markets must reference the same company, the same event type, and the same time period
+- Different fiscal quarters = different events (Q1 earnings vs Q2 earnings are UNRELATED)
+- Announcement vs outcome are distinct: "will FDA announce a decision" and "will FDA approve" are UNRELATED
+- Specific product names must match: "approval for Drug X" vs "approval for Drug Y" are UNRELATED even at the same company
+- Different named entities (companies, products, executives) = UNRELATED
+- EQUIVALENT / INVERSE / UNRELATED (standard)
+- Be conservative: when in doubt, return UNRELATED`,
+
+  Macro: `You are an expert macro-economic analyst identifying cross-venue arbitrage opportunities.
+
+Your task is to determine whether two binary markets resolve on the exact same macroeconomic outcome (GDP, inflation, Fed rates, employment, trade data).
+
+Key rules:
+- Both markets must reference the same metric, the same time window, and the same jurisdiction
+- Different numeric thresholds on the same metric are UNRELATED: "above 190" and "200 or more" is NOT equivalent or inverse
+- Different time windows: "before end of Q1" vs "by end of year" are UNRELATED
+- Absolute measures vs relative change: "rate above 4.75%" and "hike of 50 bps" are UNRELATED because one measures level and the other measures change
+- Different jurisdictions (US vs EU vs global) = UNRELATED
+- EQUIVALENT / INVERSE / UNRELATED (standard)
+- Be conservative: when in doubt, return UNRELATED`,
+
+  Commodities: `You are an expert commodity market analyst identifying cross-venue arbitrage opportunities.
+
+Your task is to determine whether two binary markets resolve on the exact same commodity price outcome (oil, gold, agriculture, metals).
+
+Key rules:
+- Both markets must reference the same commodity, the same price threshold, the same unit, and the same date
+- Different units: "$90 per barrel" vs "$90 per gallon" are UNRELATED even if both are "oil"
+- Different grades/contracts: "Brent crude" vs "WTI crude" are UNRELATED
+- Different delivery months / contract months = UNRELATED
+- "Average above X" vs "close above X" are different resolution conditions = UNRELATED
+- EQUIVALENT / INVERSE / UNRELATED (standard)
+- Be conservative: when in doubt, return UNRELATED`,
+
+  Sports: `You are an expert sports prediction-market analyst identifying cross-venue arbitrage opportunities.
+
+Your task is to determine whether two binary markets resolve on the exact same sporting outcome.
+
+Key rules:
+- Both markets must settle on the same team winning the same specific game or series
+- Game number matters: "Game 3" vs "Game 4" of the same series are different events
+- Close dates must align: if they differ by more than 1 day for head-to-head games, return UNRELATED
+  (Season-long markets like championship or MVP may have close dates weeks apart — that is acceptable)
+- Different named athletes/teams = UNRELATED: "Will LeBron win MVP?" vs "Will Jokic win MVP?" are UNRELATED
+- Kalshi-per-team vs Polymarket head-to-head asymmetry:
+  * Kalshi lists ONE binary per team ("Will Team A win?")
+  * Polymarket typically lists a multi-outcome market "Team A vs Team B" with team names as outcomes
+  * Check the Resolves: field to find which team is the Polymarket YES-token outcome
+- Spread/moneyline confusion: "cover -6.5" vs "win outright" are UNRELATED
+- Stage-specific vs outright winner: "eliminated in Semifinals" vs "win championship" are UNRELATED
+- EQUIVALENT / INVERSE (head-to-head where Kalshi YES = Polymarket NO) / UNRELATED
+- Be conservative: when in doubt, return UNRELATED`,
+}
+
 export const appSettings = {
   openrouterApiKey: "",
   venueKeys: {
@@ -167,7 +241,7 @@ export const appSettings = {
     batchSize: 25,
     confidenceThreshold: 0.85,
     autoApproveAboveThreshold: true,
-    reviewPromptTemplate: "Evaluate this pair for arbitrage opportunity. Consider spread, liquidity, time to resolution, and venue reliability.",
+    typeSpecificPrompts: { ...defaultTypePrompts },
   },
 }
 

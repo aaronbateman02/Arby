@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelError, setModelError] = useState("")
 
+
   const updateGeneral = <K extends keyof typeof settings>(key: K, value: (typeof settings)[K]) =>
     setSettings((s) => ({ ...s, [key]: value }))
 
@@ -50,7 +51,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (settings.openrouterApiKey) fetchModels()
-  }, []) // only on mount — user clicks refresh to re-fetch
+  }, [])
 
   const handleSave = () => {
     setSaved(true)
@@ -113,7 +114,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      <Section title="AI Pair Review" subtitle="Configure models, batching, and review prompts">
+      <Section title="AI Pair Review" subtitle="Configure models, batching, and type-specific review prompts">
         <div className="mb-5 pb-5 border-b border-border">
           <div className="flex items-end gap-3">
             <div className="flex-1">
@@ -135,58 +136,50 @@ export default function SettingsPage() {
           <p className="text-xs text-muted mt-1">Required to load available models. Enter your key and click Refresh.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2 h-2 rounded-full bg-accent" />
-              <span className="text-sm font-semibold text-gray-200">Leg A Review Model</span>
-              <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">Kalshi</span>
+        <div className="mb-5 pb-5 border-b border-border">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2 h-2 rounded-full bg-accent" />
+                <span className="text-sm font-semibold text-gray-200">Leg A — Batch Screener</span>
+                <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">First Pass</span>
+              </div>
+              <ModelSelect
+                value={settings.pairReview.legAModel}
+                onChange={(v) => updateReview("legAModel", v)}
+                options={modelOptions}
+                loading={loadingModels}
+                error={modelError}
+                hasKey={!!settings.openrouterApiKey}
+              />
+              <p className="text-xs text-muted">Receives a batch of candidate pairs (Kalshi + Polymarket) and determines which describe the same real-world event. Uses the type-specific prompt (below) for each strategy category.</p>
             </div>
-            <ModelSelect
-              value={settings.pairReview.legAModel}
-              onChange={(v) => updateReview("legAModel", v)}
-              options={modelOptions}
-              loading={loadingModels}
-              error={modelError}
-              hasKey={!!settings.openrouterApiKey}
-            />
-            <p className="text-xs text-muted">Reviews the Kalshi-side of each pair — evaluates spread feasibility, liquidity depth, and execution risk.</p>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-2 h-2 rounded-full bg-amber" />
-              <span className="text-sm font-semibold text-gray-200">Leg B Review Model</span>
-              <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">Polymarket</span>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2 h-2 rounded-full bg-amber" />
+                <span className="text-sm font-semibold text-gray-200">Leg B — Second Opinion</span>
+                <span className="text-[10px] text-muted bg-surface-hover px-1.5 py-0.5 rounded">Confidence Check</span>
+              </div>
+              <ModelSelect
+                value={settings.pairReview.legBModel}
+                onChange={(v) => updateReview("legBModel", v)}
+                options={modelOptions}
+                loading={loadingModels}
+                error={modelError}
+                hasKey={!!settings.openrouterApiKey}
+              />
+              <p className="text-xs text-muted">Receives confirmed matched pairs from Leg A and provides a second-opinion cross-check. Uses the same type-specific prompt to verify confidence.</p>
             </div>
-            <ModelSelect
-              value={settings.pairReview.legBModel}
-              onChange={(v) => updateReview("legBModel", v)}
-              options={modelOptions}
-              loading={loadingModels}
-              error={modelError}
-              hasKey={!!settings.openrouterApiKey}
-            />
-            <p className="text-xs text-muted">Reviews the Polymarket-side — assesses CLOB liquidity, fill probability, and adverse selection risk.</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-border">
-          <NumberInput label="Batch Size (first leg)" value={settings.pairReview.batchSize} onChange={(v) => updateReview("batchSize", v)} min={1} max={200} help="Number of candidate pairs sent to the Leg A model in each review batch." />
-          <NumberInput label="Confidence Threshold" value={Math.round(settings.pairReview.confidenceThreshold * 100)} onChange={(v) => updateReview("confidenceThreshold", v / 100)} min={0} max={100} suffix="%" help="Pairs scoring above this threshold are auto-approved. Below goes to manual review." />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+          <NumberInput label="Batch Size (Leg A)" value={settings.pairReview.batchSize} onChange={(v) => updateReview("batchSize", v)} min={1} max={200} help="Number of candidate pairs sent to the Leg A model in each review batch." />
+          <NumberInput label="Confidence Threshold" value={Math.round(settings.pairReview.confidenceThreshold * 100)} onChange={(v) => updateReview("confidenceThreshold", v / 100)} min={0} max={100} suffix="%" help="Pairs scoring above this threshold after Leg B are auto-approved. Below goes to manual review." />
           <Toggle label="Auto-approve above threshold" value={settings.pairReview.autoApproveAboveThreshold} onChange={(v) => updateReview("autoApproveAboveThreshold", v)} />
         </div>
 
-        <div className="mt-4">
-          <label className="text-xs text-muted block mb-1">
-            Review Prompt Template
-          </label>
-          <textarea
-            className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-gray-200 outline-none focus:border-accent resize-y min-h-[72px]"
-            value={settings.pairReview.reviewPromptTemplate}
-            onChange={(e) => updateReview("reviewPromptTemplate", e.target.value)}
-          />
-          <p className="text-xs text-muted mt-1">Custom prompt sent to the model alongside each pair. Leave default for recommended behavior.</p>
-        </div>
+
       </Section>
     </div>
   )
