@@ -7,10 +7,16 @@ export function BundleModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-surface rounded-xl border border-border shadow-xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-surface rounded-xl border border-border shadow-xl max-w-3xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div>
-            <h2 className="text-lg font-bold text-gray-100">{bundle.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-gray-100">{bundle.name}</h2>
+              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                bundle.status === "active" ? "text-green bg-green/10" :
+                bundle.status === "completed" ? "text-muted bg-surface-hover" : "text-red bg-red/10"
+              }`}>{bundle.status}</span>
+            </div>
             <p className="text-xs text-muted mt-0.5">ID: {bundle.id}</p>
           </div>
           <button onClick={onClose} className="text-muted hover:text-gray-200 p-1">
@@ -23,55 +29,47 @@ export function BundleModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
         <div className="p-5 space-y-5">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Detail label="Strategy" value={bundle.strategy} />
+            <Detail label="Exposure" value={`$${bundle.exposure.toLocaleString()}`} />
+            <Detail label="P&L" value={`+$${bundle.pnl.toFixed(2)}`} positive />
             <Detail label="Opened" value={bundle.openedAt} />
             <Detail label="Resolves" value={bundle.resolvesAt} />
             <Detail label="Time to Resolve" value={`${daysToResolve} days`} />
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Detail label="Exposure" value={`$${bundle.exposure.toLocaleString()}`} />
-            <Detail label="Projected ROI" value={`${bundle.projectedRoi}%`} positive />
+            <Detail label="Projected ROI" value={`${bundle.projectedRoi}%`} />
             <Detail label="Actual ROI" value={`${bundle.actualRoi}%`} positive />
-            <Detail label="Total Fees" value={`$${bundle.totalFees.toFixed(2)}`} negative />
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-200">Legs</h3>
-              <span className="text-xs text-muted">{bundle.legs.length} legs</span>
+              <span className="text-xs text-muted">{bundle.legs.length} legs · ${bundle.totalFees.toFixed(2)} total fees</span>
             </div>
             <div className="space-y-2">
-              <div className="grid grid-cols-5 gap-2 text-xs text-muted px-3">
+              <div className="grid grid-cols-6 gap-2 text-xs text-muted px-3">
                 <span className="col-span-2">Market</span>
-                <span className="text-right">Venue</span>
+                <span className="text-center">Venue</span>
+                <span className="text-center">Side</span>
                 <span className="text-right">Est. Cost</span>
                 <span className="text-right">Act. Cost</span>
               </div>
               {bundle.legs.map((leg, i) => (
-                <div key={i} className="grid grid-cols-5 gap-2 items-center py-2 px-3 rounded-lg bg-surface-alt/50 text-sm">
+                <div key={i} className="grid grid-cols-6 gap-2 items-center py-2 px-3 rounded-lg bg-surface-alt/50 text-sm">
                   <div className="col-span-2 flex items-center gap-2">
                     <span className={`w-1.5 h-1.5 rounded-full ${leg.venue === "Kalshi" ? "bg-accent" : "bg-amber"}`} />
-                    <span className="text-gray-200 truncate">{leg.market}</span>
+                    <a href="#" className="text-accent hover:text-accent-hover truncate underline-offset-2 hover:underline">{leg.market}</a>
                   </div>
-                  <span className="text-right text-muted">{leg.venue}</span>
+                  <span className="text-center text-muted">{leg.venue}</span>
+                  <span className="text-center text-gray-200">{leg.side}</span>
                   <span className="text-right text-muted">${leg.estimatedCost.toFixed(2)}</span>
-                  <div className="flex items-center justify-end gap-2">
+                  <div className="flex items-center justify-end gap-1.5">
                     <span className="text-gray-200">${leg.actualCost.toFixed(2)}</span>
                     <span className={`text-xs px-1 py-0.5 rounded ${
                       leg.status === "filled" ? "text-green bg-green/10" :
                       leg.status === "working" ? "text-amber bg-amber/10" : "text-muted bg-surface-hover"
-                    }`}>{leg.status}</span>
+                    }`}>{leg.status === "filled" ? "✓" : leg.status === "working" ? "…" : ""}</span>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-3 border-t border-border">
-            <Detail label="Side" value={bundle.legs[0]?.side ?? "—"} />
-            <Detail label="P&L" value={`+$${bundle.pnl.toFixed(2)}`} positive />
-            <Detail label="Status" value={bundle.status} />
-            <Detail label="Total Fees" value={`$${bundle.totalFees.toFixed(2)}`} negative />
           </div>
         </div>
       </div>
@@ -79,7 +77,7 @@ export function BundleModal({ bundle, onClose }: { bundle: Bundle; onClose: () =
   )
 }
 
-function Detail({ label, value, positive }: { label: string; value: string; positive?: boolean; negative?: boolean }) {
+function Detail({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
   return (
     <div>
       <p className="text-xs text-muted">{label}</p>
