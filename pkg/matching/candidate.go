@@ -91,7 +91,6 @@ func (d *CandidateDiscoverer) RunOnce(ctx context.Context) error {
 		}
 	}
 
-	venueA := "Polymarket"
 	venueB = "Kalshi"
 	for _, a := range poly {
 		results, err := d.queryANN(ctx, a.ID, venueB, d.annLimit)
