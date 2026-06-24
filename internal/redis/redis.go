@@ -17,7 +17,7 @@ func Connect(ctx context.Context, addr string) (*Client, error) {
 	}
 
 	c, err := rueidis.NewClient(rueidis.ClientOption{
-		Addr: addr,
+		InitAddress: []string{addr},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create client: %w", err)
@@ -35,7 +35,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	if c == nil || c.c == nil {
 		return fmt.Errorf("redis client not initialized")
 	}
-	return c.Do(ctx, c.B().Ping().Build()).Error()
+	return c.c.Do(ctx, c.c.B().Ping().Build()).Error()
 }
 
 func (c *Client) Do(ctx context.Context, cmd rueidis.Completed) rueidis.RedisResult {

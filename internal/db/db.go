@@ -22,7 +22,6 @@ func Connect(ctx context.Context, dsn string) (*Pool, error) {
 	cfg.MinConns = 2
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 5 * time.Minute
-	cfg.HealthCheckInterval = 30 * time.Second
 
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
