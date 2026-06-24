@@ -188,10 +188,52 @@ func (h *Handler) RejectMatchPair(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+type settingsResponse struct {
+	SimilarityThreshold float64 `json:"similarity_threshold"`
+}
+
+type settingsUpdateRequest struct {
+	SimilarityThreshold float64 `json:"similarity_threshold"`
+}
+
+func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	threshold, err := h.store.GetSimilarityThreshold(ctx)
+	if err != nil {
+		slog.Error("get settings", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settingsResponse{SimilarityThreshold: threshold})
+}
+
+func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
+	var req settingsUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.SimilarityThreshold < 0 || req.SimilarityThreshold > 1 {
+		http.Error(w, "similarity_threshold must be between 0 and 1", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	if err := h.store.SetSimilarityThreshold(ctx, req.SimilarityThreshold); err != nil {
+		slog.Error("set settings", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 func (h *Handler) WireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/markets/unembedded", h.GetUnembedded)
 	mux.HandleFunc("POST /api/v1/markets/embeddings", h.PostEmbeddings)
 	mux.HandleFunc("GET /api/v1/matching/pairs", h.GetMatchPairs)
 	mux.HandleFunc("POST /api/v1/matching/pairs/{id}/approve", h.ApproveMatchPair)
 	mux.HandleFunc("POST /api/v1/matching/pairs/{id}/reject", h.RejectMatchPair)
+	mux.HandleFunc("GET /api/v1/matching/settings", h.GetSettings)
+	mux.HandleFunc("POST /api/v1/matching/settings", h.PostSettings)
 }

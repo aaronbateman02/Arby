@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,7 +109,14 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		reviewed_at     TIMESTAMPTZ,
 		approved_by     VARCHAR(100),
 		status          VARCHAR(20) NOT NULL DEFAULT 'PENDING_APPROVAL'
-	);`
+	);
+
+	CREATE TABLE IF NOT EXISTS matching_config (
+		key   VARCHAR(100) PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	INSERT INTO matching_config (key, value) VALUES ('similarity_threshold', '0.80')
+	ON CONFLICT (key) DO NOTHING;`
 
 	_, err := s.pg.P().Exec(ctx, sql)
 	if err != nil {
@@ -452,6 +460,33 @@ func (s *Store) GetMarketByID(ctx context.Context, id string) (*Market, error) {
 		return nil, fmt.Errorf("get market by id: %w", err)
 	}
 	return &m, nil
+}
+
+func (s *Store) GetSimilarityThreshold(ctx context.Context) (float64, error) {
+	var val string
+	err := s.pg.P().QueryRow(ctx,
+		`SELECT value FROM matching_config WHERE key = 'similarity_threshold'`,
+	).Scan(&val)
+	if err != nil {
+		return 0.80, fmt.Errorf("get similarity threshold: %w", err)
+	}
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0.80, nil
+	}
+	return f, nil
+}
+
+func (s *Store) SetSimilarityThreshold(ctx context.Context, val float64) error {
+	_, err := s.pg.P().Exec(ctx,
+		`INSERT INTO matching_config (key, value) VALUES ('similarity_threshold', $1)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		fmt.Sprintf("%.4f", val),
+	)
+	if err != nil {
+		return fmt.Errorf("set similarity threshold: %w", err)
+	}
+	return nil
 }
 
 func joinFloats(v []float64, sep string) string {
