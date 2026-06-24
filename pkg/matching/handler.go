@@ -228,6 +228,18 @@ func (h *Handler) PostSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stats, err := h.store.GetStats(ctx)
+	if err != nil {
+		slog.Error("get stats", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 func (h *Handler) WireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/markets/unembedded", h.GetUnembedded)
 	mux.HandleFunc("POST /api/v1/markets/embeddings", h.PostEmbeddings)
@@ -236,4 +248,5 @@ func (h *Handler) WireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/matching/pairs/{id}/reject", h.RejectMatchPair)
 	mux.HandleFunc("GET /api/v1/matching/settings", h.GetSettings)
 	mux.HandleFunc("POST /api/v1/matching/settings", h.PostSettings)
+	mux.HandleFunc("GET /api/v1/matching/stats", h.GetStats)
 }

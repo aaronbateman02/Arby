@@ -489,6 +489,37 @@ func (s *Store) SetSimilarityThreshold(ctx context.Context, val float64) error {
 	return nil
 }
 
+type Stats struct {
+	Unembedded           int `json:"unembedded"`
+	Embedded             int `json:"embedded"`
+	PendingCandidates    int `json:"pending_candidates"`
+	ReviewedCandidates   int `json:"reviewed_candidates"`
+	PairsPendingApproval int `json:"pairs_pending_approval"`
+	PairsApproved        int `json:"pairs_approved"`
+	PairsRejected        int `json:"pairs_rejected"`
+}
+
+func (s *Store) GetStats(ctx context.Context) (*Stats, error) {
+	var st Stats
+	err := s.pg.P().QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM markets WHERE embedding IS NULL AND status = 'OPEN' AND COALESCE(title, '') <> '' AND description IS NOT NULL AND TRIM(description) <> ''),
+			(SELECT COUNT(*) FROM markets WHERE embedding IS NOT NULL AND status = 'OPEN'),
+			(SELECT COUNT(*) FROM match_candidates WHERE status = 'PENDING'),
+			(SELECT COUNT(*) FROM match_candidates WHERE status = 'REVIEWED'),
+			(SELECT COUNT(*) FROM match_pairs WHERE status = 'PENDING_APPROVAL'),
+			(SELECT COUNT(*) FROM match_pairs WHERE status = 'APPROVED'),
+			(SELECT COUNT(*) FROM match_pairs WHERE status = 'REJECTED')
+	`).Scan(
+		&st.Unembedded, &st.Embedded, &st.PendingCandidates, &st.ReviewedCandidates,
+		&st.PairsPendingApproval, &st.PairsApproved, &st.PairsRejected,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get stats: %w", err)
+	}
+	return &st, nil
+}
+
 func joinFloats(v []float64, sep string) string {
 	if len(v) == 0 {
 		return "[]"
