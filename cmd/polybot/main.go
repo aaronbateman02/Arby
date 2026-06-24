@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/aaronbateman02/Arby/pkg/ingestion"
 	"github.com/aaronbateman02/Arby/pkg/ingestion/discovery"
 	"github.com/aaronbateman02/Arby/pkg/ingestion/pricing"
+	"github.com/aaronbateman02/Arby/pkg/matching"
 )
 
 func main() {
@@ -85,6 +87,64 @@ func main() {
 	go pricingMgr.Run(ctx)
 	slog.Info("pricing manager started")
 
+	matchingStore := matching.NewStore(pg)
+	if err := matchingStore.CreateTables(ctx); err != nil {
+		slog.Error("matching tables", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("matching store initialized")
+
+	go func() {
+		marketCh, err := eventBus.Subscribe("MarketDiscovered")
+		if err != nil {
+			slog.Error("subscribe market discovered", "error", err)
+			return
+		}
+		slog.Info("subscribed to MarketDiscovered events")
+
+		for {
+			select {
+			case msg := <-marketCh:
+				var discMarket discovery.Market
+				if err := json.Unmarshal(msg.Payload, &discMarket); err != nil {
+					slog.Error("unmarshal discovered market", "error", err)
+					continue
+				}
+
+				desc := discMarket.Title
+				if discMarket.Series != "" {
+					desc = discMarket.Series + " - " + discMarket.Title
+				}
+
+				var resDate *time.Time
+				if !discMarket.CloseTime.IsZero() {
+					resDate = &discMarket.CloseTime
+				}
+
+				m := matching.Market{
+					Venue:          discMarket.Venue,
+					VenueMarketID:  discMarket.MarketID,
+					Title:          discMarket.Title,
+					Description:    desc,
+					Category:       discMarket.Category,
+					StructureType:  "BINARY",
+					Status:         "OPEN",
+					ResolutionDate: resDate,
+				}
+
+				if err := matchingStore.UpsertMarket(ctx, m); err != nil {
+					slog.Error("upsert discovered market", "error", err, "market_id", discMarket.MarketID)
+					continue
+				}
+				slog.Debug("market upserted", "venue", discMarket.Venue, "id", discMarket.MarketID, "title", discMarket.Title)
+
+			case <-ctx.Done():
+				slog.Info("market subscriber stopped")
+				return
+			}
+		}
+	}()
+
 	h := health.New(
 		func(ctx context.Context) error { return pg.HealthCheck(ctx) },
 		func(ctx context.Context) error { return rdb.HealthCheck(ctx) },
@@ -94,6 +154,31 @@ func main() {
 	mux.HandleFunc("GET /healthz", h.LivenessHandler())
 	mux.HandleFunc("GET /readyz", h.ReadinessHandler())
 	mux.Handle("GET /metrics", met.Handler())
+
+	matchingHandler := matching.NewHandler(matchingStore)
+	matchingHandler.WireRoutes(mux)
+
+	discoverer := matching.NewCandidateDiscoverer(
+		matchingStore,
+		5*time.Minute,
+		0.80,
+		20,
+	)
+	go discoverer.Run(ctx)
+	slog.Info("candidate discoverer started")
+
+	reviewer := matching.NewReviewer(
+		matchingStore,
+		5*time.Minute,
+		cfg.OpenRouterAPIKey,
+		cfg.OpenRouterBaseURL,
+		"openai/gpt-4o",
+		"openai/gpt-4o-mini",
+		40,
+		0.90,
+	)
+	go reviewer.Run(ctx)
+	slog.Info("matching reviewer started")
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
