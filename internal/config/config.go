@@ -4,21 +4,27 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 )
 
+type IngestionConfig struct {
+	DiscoveryInterval time.Duration `validate:"min=1s"`
+}
+
 type Config struct {
-	PostgresDSN        string `validate:"required"`
-	RedisAddr          string `validate:"required"`
-	ListenAddr         string `validate:"required"`
-	LogLevel           string `validate:"omitempty,oneof=debug info warn error"`
+	PostgresDSN        string           `validate:"required"`
+	RedisAddr          string           `validate:"required"`
+	ListenAddr         string           `validate:"required"`
+	LogLevel           string           `validate:"omitempty,oneof=debug info warn error"`
 	OpenRouterAPIKey   string
 	OpenRouterBaseURL  string
 	KalshiKeyID        string
 	KalshiPrivateKeyPEM string
 	PolymarketProxyURL string
 	JWTSecretKey       string
+	Ingestion          IngestionConfig
 }
 
 func (c *Config) Validate() error {
@@ -38,6 +44,9 @@ func LoadFromEnv() (*Config, error) {
 		KalshiPrivateKeyPEM: readSecretOr(os.Getenv("KALSHI_PRIVATE_KEY_FILE")),
 		PolymarketProxyURL: os.Getenv("POLYMARKET_PROXY_URL"),
 		JWTSecretKey:       readSecretOr(os.Getenv("JWT_SECRET_KEY_FILE")),
+		Ingestion: IngestionConfig{
+			DiscoveryInterval: envOrDefaultDuration("INGESTION_DISCOVERY_INTERVAL", 5*time.Minute),
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -61,6 +70,15 @@ func readSecretOr(path string) string {
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envOrDefaultDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }

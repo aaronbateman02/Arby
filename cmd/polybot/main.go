@@ -18,6 +18,9 @@ import (
 	"github.com/aaronbateman02/Arby/internal/logging"
 	"github.com/aaronbateman02/Arby/internal/metrics"
 	arbyredis "github.com/aaronbateman02/Arby/internal/redis"
+	"github.com/aaronbateman02/Arby/pkg/ingestion"
+	"github.com/aaronbateman02/Arby/pkg/ingestion/discovery"
+	"github.com/aaronbateman02/Arby/pkg/ingestion/pricing"
 )
 
 func main() {
@@ -67,6 +70,21 @@ func main() {
 	}
 	slog.Info("auth initialized")
 
+	priceCache := ingestion.NewPriceCache()
+	slog.Info("price cache initialized")
+
+	discKalshi := discovery.NewKalshiClient(cfg.KalshiKeyID, cfg.KalshiPrivateKeyPEM)
+	discPoly := discovery.NewPolymarketClient()
+	discScanner := discovery.NewScanner(eventBus, cfg.Ingestion.DiscoveryInterval, discKalshi, discPoly)
+	go discScanner.Run(ctx)
+	slog.Info("discovery scanner started")
+
+	priceKalshi := pricing.NewKalshiClient(cfg.KalshiKeyID, cfg.KalshiPrivateKeyPEM)
+	pricePoly := pricing.NewPolymarketClient()
+	pricingMgr := pricing.NewManager(priceCache, priceKalshi, pricePoly)
+	go pricingMgr.Run(ctx)
+	slog.Info("pricing manager started")
+
 	h := health.New(
 		func(ctx context.Context) error { return pg.HealthCheck(ctx) },
 		func(ctx context.Context) error { return rdb.HealthCheck(ctx) },
@@ -109,4 +127,5 @@ func main() {
 
 	_ = eventBus
 	_ = authenticator
+	_ = priceCache
 }
