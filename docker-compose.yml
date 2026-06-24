@@ -9,6 +9,12 @@ services:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
 
+  ui:
+    build: services/ui
+    container_name: arby-ui
+    restart: unless-stopped
+    ports: [ "3000:3000" ]
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: arby-postgres
