@@ -14,4 +14,5 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 EXPOSE 3000
 ENV HOSTNAME=0.0.0.0
+ENV SETTINGS_FILE_PATH=/data/settings/config.json
 CMD ["node", "server.js"]

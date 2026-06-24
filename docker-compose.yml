@@ -14,6 +14,8 @@ services:
     container_name: arby-ui
     restart: unless-stopped
     ports: [ "3000:3000" ]
+    volumes:
+      - arby_ui_data:/data
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -50,6 +52,7 @@ services:
 volumes:
   arby_postgres_data:
   arby_redis_data:
+  arby_ui_data:
 
 secrets:
   postgres_password:
