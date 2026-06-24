@@ -28,6 +28,8 @@ services:
       POSTGRES_DB: arby
       POSTGRES_USER: arby
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
       - arby_postgres_data:/var/lib/postgresql/data
     ports: ["5435:5432"]
