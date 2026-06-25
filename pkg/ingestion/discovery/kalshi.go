@@ -87,6 +87,12 @@ func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Ma
 		series = strings.ToLower(tickerParts[0])
 	}
 
+	// Only set event fields when this is a real event market (not a bundle)
+	venueEventID := ""
+	if eventTitle != "" {
+		venueEventID = km.EventTicker
+	}
+
 	return Market{
 		Venue:        "KALSHI",
 		MarketID:     km.Ticker,
@@ -95,7 +101,7 @@ func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Ma
 		Description:  strings.TrimSpace(km.RulesPrimary),
 		Series:       series,
 		Category:     km.Sector,
-		VenueEventID: km.EventTicker,
+		VenueEventID: venueEventID,
 		EventTitle:   eventTitle,
 		Outcomes: []Outcome{
 			{Name: "Yes", Price: km.YesBid},

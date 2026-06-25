@@ -61,9 +61,9 @@ type pmEvent struct {
 }
 
 type pmTag struct {
-	ID    int    `json:"id"`
-	Label string `json:"label"`
-	Slug  string `json:"slug"`
+	ID    json.Number `json:"id"`
+	Label string      `json:"label"`
+	Slug  string      `json:"slug"`
 }
 
 type pmMarket struct {
