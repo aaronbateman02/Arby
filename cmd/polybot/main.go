@@ -62,7 +62,7 @@ func main() {
 	met := metrics.New()
 	slog.Info("metrics initialized")
 
-	eventBus := bus.New(100000)
+	eventBus := bus.New(500000)
 	slog.Info("event bus initialized")
 
 	authenticator, err := auth.New(cfg.JWTSecretKey)
