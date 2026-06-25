@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
+export const dynamic = "force-dynamic"
+
 const GO_API_URL = process.env.GO_API_URL || "http://polybot:8086"
 
 export async function GET(req: NextRequest) {
@@ -10,6 +12,7 @@ export async function GET(req: NextRequest) {
   }
   const res = await fetch(
     `${GO_API_URL}/api/v1/matching/markets/search?venue=${encodeURIComponent(venue)}&q=${encodeURIComponent(q)}&limit=10`,
+    { cache: "no-store" },
   )
   const data = await res.json()
   return NextResponse.json(data)

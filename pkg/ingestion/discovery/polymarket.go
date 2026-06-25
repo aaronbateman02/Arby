@@ -24,7 +24,7 @@ func NewPolymarketClient() *PolymarketClient {
 func (c *PolymarketClient) Venue() string { return "POLYMARKET" }
 
 func (c *PolymarketClient) FetchMarkets(ctx context.Context) ([]Market, error) {
-	url := fmt.Sprintf("%s/markets?limit=1000&closed=false", c.baseURL)
+	url := fmt.Sprintf("%s/markets?limit=1000", c.baseURL)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -42,47 +42,49 @@ func (c *PolymarketClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 		return nil, fmt.Errorf("polymarket read: %w", err)
 	}
 
-	var raw []polymarketMarket
-	if err := json.Unmarshal(body, &raw); err != nil {
+	var wrapper struct {
+		Data []polymarketMarket `json:"data"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
 		return nil, fmt.Errorf("polymarket decode: %w", err)
 	}
 
 	var result []Market
-	for _, pm := range raw {
+	for _, pm := range wrapper.Data {
 		result = append(result, c.normalize(pm))
 	}
 
 	return result, nil
 }
 
+type polymarketToken struct {
+	TokenID string  `json:"token_id"`
+	Outcome string  `json:"outcome"`
+	Price   float64 `json:"price"`
+}
+
 type polymarketMarket struct {
-	ConditionID string    `json:"condition_id"`
-	Question    string    `json:"question"`
-	Slug        string    `json:"slug"`
-	Category    string    `json:"category"`
-	EndDate     string    `json:"end_date"`
-	Outcomes    []string  `json:"outcomes"`
-	Prices      []float64 `json:"prices"`
+	ConditionID string           `json:"condition_id"`
+	Question    string           `json:"question"`
+	MarketSlug  string           `json:"market_slug"`
+	EndDateISO  string           `json:"end_date_iso"`
+	Tokens      []polymarketToken `json:"tokens"`
 }
 
 func (c *PolymarketClient) normalize(pm polymarketMarket) Market {
 	var closeTime time.Time
-	if pm.EndDate != "" {
-		closeTime, _ = time.Parse(time.RFC3339, pm.EndDate)
+	if pm.EndDateISO != "" {
+		closeTime, _ = time.Parse(time.RFC3339, pm.EndDateISO)
 	}
 
-	ticker := pm.Slug
+	ticker := pm.MarketSlug
 	if ticker == "" {
 		ticker = pm.ConditionID
 	}
 
-	outcomes := make([]Outcome, len(pm.Outcomes))
-	for i, name := range pm.Outcomes {
-		price := 0.0
-		if i < len(pm.Prices) {
-			price = pm.Prices[i]
-		}
-		outcomes[i] = Outcome{Name: name, Price: price}
+	outcomes := make([]Outcome, len(pm.Tokens))
+	for i, t := range pm.Tokens {
+		outcomes[i] = Outcome{Name: t.Outcome, Price: t.Price}
 	}
 
 	return Market{
@@ -90,7 +92,6 @@ func (c *PolymarketClient) normalize(pm polymarketMarket) Market {
 		MarketID:  pm.ConditionID,
 		Ticker:    ticker,
 		Title:     pm.Question,
-		Category:  pm.Category,
 		Outcomes:  outcomes,
 		CloseTime: closeTime,
 	}

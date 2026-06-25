@@ -21,6 +21,8 @@ type Market struct {
 	Title          string     `json:"title"`
 	Description    string     `json:"description"`
 	Category       string     `json:"category"`
+	Subcategory    string     `json:"subcategory"`
+	MarketType     string     `json:"market_type"`
 	StructureType  string     `json:"structure_type"`
 	Status         string     `json:"status"`
 	ResolutionDate *time.Time `json:"resolution_date,omitempty"`
@@ -73,6 +75,8 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		title           TEXT NOT NULL,
 		description     TEXT,
 		category        VARCHAR(100),
+		subcategory     VARCHAR(100),
+		market_type     VARCHAR(50),
 		structure_type  VARCHAR(20) NOT NULL DEFAULT 'BINARY',
 		status          VARCHAR(20) NOT NULL DEFAULT 'OPEN',
 		resolution_date TIMESTAMPTZ,
@@ -128,12 +132,14 @@ func (s *Store) CreateTables(ctx context.Context) error {
 
 func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 	sql := `
-	INSERT INTO markets (venue, venue_market_id, title, description, category, structure_type, status, resolution_date)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	INSERT INTO markets (venue, venue_market_id, title, description, category, subcategory, market_type, structure_type, status, resolution_date)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	ON CONFLICT (venue, venue_market_id) DO UPDATE SET
 		title = EXCLUDED.title,
 		description = EXCLUDED.description,
 		category = EXCLUDED.category,
+		subcategory = EXCLUDED.subcategory,
+		market_type = EXCLUDED.market_type,
 		structure_type = EXCLUDED.structure_type,
 		status = EXCLUDED.status,
 		resolution_date = EXCLUDED.resolution_date,
@@ -141,7 +147,7 @@ func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 
 	_, err := s.pg.P().Exec(ctx, sql,
 		m.Venue, m.VenueMarketID, m.Title, m.Description,
-		m.Category, m.StructureType, m.Status, m.ResolutionDate,
+		m.Category, m.Subcategory, m.MarketType, m.StructureType, m.Status, m.ResolutionDate,
 	)
 	if err != nil {
 		slog.Error("failed to upsert market", "error", err, "venue", m.Venue, "venue_market_id", m.VenueMarketID)
@@ -152,7 +158,7 @@ func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 
 func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, error) {
 	sql := `
-	SELECT id, venue, venue_market_id, title, description, category, structure_type, status, resolution_date
+	SELECT id, venue, venue_market_id, title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
 	FROM markets
 	WHERE embedding IS NULL AND title != '' AND description IS NOT NULL AND description != ''
 	ORDER BY last_updated_at ASC
@@ -170,7 +176,7 @@ func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, 
 		var m Market
 		if err := rows.Scan(
 			&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description,
-			&m.Category, &m.StructureType, &m.Status, &m.ResolutionDate,
+			&m.Category, &m.Subcategory, &m.MarketType, &m.StructureType, &m.Status, &m.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan market row", "error", err)
 			return nil, fmt.Errorf("scan market: %w", err)
@@ -185,7 +191,7 @@ func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, 
 
 func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, error) {
 	sql := `
-	SELECT id, venue, venue_market_id, title, description, category, structure_type, status, resolution_date
+	SELECT id, venue, venue_market_id, title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
 	FROM markets
 	WHERE embedding IS NOT NULL
 	ORDER BY last_updated_at DESC
@@ -203,7 +209,7 @@ func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, er
 		var m Market
 		if err := rows.Scan(
 			&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description,
-			&m.Category, &m.StructureType, &m.Status, &m.ResolutionDate,
+			&m.Category, &m.Subcategory, &m.MarketType, &m.StructureType, &m.Status, &m.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan market row", "error", err)
 			return nil, fmt.Errorf("scan market: %w", err)
@@ -218,10 +224,13 @@ func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, er
 
 func (s *Store) UpsertEmbedding(ctx context.Context, id string, vector []float64) error {
 	vecStr := joinFloats(vector, ",")
-	_, err := s.pg.P().Exec(ctx, "UPDATE markets SET embedding = $2::vector WHERE id = $1", id, vecStr)
+	tag, err := s.pg.P().Exec(ctx, "UPDATE markets SET embedding = $2::vector WHERE id = $1", id, vecStr)
 	if err != nil {
 		slog.Error("failed to upsert embedding", "error", err, "id", id)
 		return fmt.Errorf("upsert embedding: %w", err)
+	}
+	if n := tag.RowsAffected(); n == 0 {
+		slog.Warn("upsert embedding matched 0 rows", "id", id)
 	}
 	return nil
 }
@@ -273,8 +282,8 @@ func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int, 
 	sql := `
 	SELECT
 		c.id, c.market_a_id, c.market_b_id, c.similarity, c.category, c.status,
-		ma.id, ma.venue, ma.venue_market_id, ma.title, ma.description, ma.category, ma.structure_type, ma.status, ma.resolution_date,
-		mb.id, mb.venue, mb.venue_market_id, mb.title, mb.description, mb.category, mb.structure_type, mb.status, mb.resolution_date
+		ma.id, ma.venue, ma.venue_market_id, ma.title, COALESCE(ma.description, ''), COALESCE(ma.category, ''), COALESCE(ma.subcategory, ''), COALESCE(ma.market_type, ''), ma.structure_type, ma.status, ma.resolution_date,
+		mb.id, mb.venue, mb.venue_market_id, mb.title, COALESCE(mb.description, ''), COALESCE(mb.category, ''), COALESCE(mb.subcategory, ''), COALESCE(mb.market_type, ''), mb.structure_type, mb.status, mb.resolution_date
 	FROM match_candidates c
 	JOIN markets ma ON ma.id = c.market_a_id
 	JOIN markets mb ON mb.id = c.market_b_id
@@ -295,9 +304,9 @@ func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int, 
 		if err := rows.Scan(
 			&cwm.ID, &cwm.MarketAID, &cwm.MarketBID, &cwm.Similarity, &cwm.Category, &cwm.Status,
 			&cwm.MarketA.ID, &cwm.MarketA.Venue, &cwm.MarketA.VenueMarketID, &cwm.MarketA.Title, &cwm.MarketA.Description,
-			&cwm.MarketA.Category, &cwm.MarketA.StructureType, &cwm.MarketA.Status, &cwm.MarketA.ResolutionDate,
+			&cwm.MarketA.Category, &cwm.MarketA.Subcategory, &cwm.MarketA.MarketType, &cwm.MarketA.StructureType, &cwm.MarketA.Status, &cwm.MarketA.ResolutionDate,
 			&cwm.MarketB.ID, &cwm.MarketB.Venue, &cwm.MarketB.VenueMarketID, &cwm.MarketB.Title, &cwm.MarketB.Description,
-			&cwm.MarketB.Category, &cwm.MarketB.StructureType, &cwm.MarketB.Status, &cwm.MarketB.ResolutionDate,
+			&cwm.MarketB.Category, &cwm.MarketB.Subcategory, &cwm.MarketB.MarketType, &cwm.MarketB.StructureType, &cwm.MarketB.Status, &cwm.MarketB.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan candidate with markets row", "error", err)
 			return nil, fmt.Errorf("scan candidate with markets: %w", err)

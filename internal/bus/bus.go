@@ -15,11 +15,13 @@ type Bus struct {
 	mu          sync.RWMutex
 	subscribers map[string]map[int]chan Message
 	nextID      int
+	channelSize int
 }
 
 func New(channelSize int) *Bus {
 	return &Bus{
 		subscribers: make(map[string]map[int]chan Message),
+		channelSize: channelSize,
 	}
 }
 
@@ -32,7 +34,7 @@ func (b *Bus) Subscribe(topic string) (chan Message, error) {
 	}
 
 	b.nextID++
-	ch := make(chan Message, 100)
+	ch := make(chan Message, b.channelSize)
 	b.subscribers[topic][b.nextID] = ch
 
 	return ch, nil
@@ -64,14 +66,12 @@ func (b *Bus) Publish(topic string, payload []byte) {
 
 	msg := Message{Topic: topic, Payload: payload}
 
-	b.mu.RLock()
 	for _, ch := range subs {
 		select {
 		case ch <- msg:
 		default:
 		}
 	}
-	b.mu.RUnlock()
 }
 
 func (b *Bus) PublishTyped(topic string, v interface{}) error {

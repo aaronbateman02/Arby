@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,68 +30,49 @@ func NewKalshiClient(keyID, keyPEM string) *KalshiClient {
 
 func (c *KalshiClient) Venue() string { return "KALSHI" }
 
-func (c *KalshiClient) FetchMarkets(ctx context.Context) ([]Market, error) {
-	var all []Market
-	cursor := ""
-
-	for {
-		url := fmt.Sprintf("%s/markets?limit=1000&status=open", c.baseURL)
-		if cursor != "" {
-			url += "&cursor=" + cursor
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("kalshi request: %w", err)
-		}
-		c.signRequest(req)
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("kalshi do: %w", err)
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("kalshi read: %w", err)
-		}
-
-		var result struct {
-			Markets []kalshiMarket `json:"markets"`
-			Cursor  string         `json:"cursor"`
-		}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("kalshi decode: %w", err)
-		}
-
-		for _, km := range result.Markets {
-			all = append(all, c.normalize(km))
-		}
-
-		if result.Cursor == "" || len(result.Markets) == 0 {
-			break
-		}
-		cursor = result.Cursor
-	}
-
-	return all, nil
+type kalshiMarket struct {
+	Ticker          string    `json:"ticker"`
+	Title           string    `json:"title"`
+	Sector          string    `json:"sector"`
+	Series          string    `json:"series"`
+	OpenTime        string    `json:"open_time"`
+	CloseTime       string    `json:"close_time"`
+	YesBid          float64   `json:"yes_bid"`
+	YesAsk          float64   `json:"yes_ask"`
+	NoBid           float64   `json:"no_bid"`
+	NoAsk           float64   `json:"no_ask"`
+	EventTicker     string    `json:"event_ticker"`
+	MveSelectedLegs []mveLeg  `json:"mve_selected_legs"`
+	MarketType      string    `json:"market_type"`
+	RulesPrimary    string    `json:"rules_primary"`
+	YesSubTitle     string    `json:"yes_sub_title"`
+	NoSubTitle      string    `json:"no_sub_title"`
 }
 
-type kalshiMarket struct {
-	Ticker    string  `json:"ticker"`
-	Title     string  `json:"title"`
-	Sector    string  `json:"sector"`
-	Series    string  `json:"series"`
-	OpenTime  string  `json:"open_time"`
-	CloseTime string  `json:"close_time"`
-	YesBid    float64 `json:"yes_bid"`
-	YesAsk    float64 `json:"yes_ask"`
-	NoBid     float64 `json:"no_bid"`
-	NoAsk     float64 `json:"no_ask"`
+type kalshiEvent struct {
+	EventTicker string `json:"event_ticker"`
+	Title       string `json:"title"`
+	SubTitle    string `json:"sub_title"`
+	Category    string `json:"category"`
+	SeriesTicker string `json:"series_ticker"`
+}
+
+type eventResponse struct {
+	Event   kalshiEvent    `json:"event"`
+	Markets []kalshiMarket `json:"markets"`
+}
+
+type mveLeg struct {
+	EventTicker  string `json:"event_ticker"`
+	MarketTicker string `json:"market_ticker"`
+	Side         string `json:"side"`
 }
 
 func (c *KalshiClient) normalize(km kalshiMarket) Market {
+	return c.normalizeWithEvent(km, "")
+}
+
+func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Market {
 	var openTime, closeTime time.Time
 	if km.OpenTime != "" {
 		openTime, _ = time.Parse(time.RFC3339, km.OpenTime)
@@ -104,13 +87,21 @@ func (c *KalshiClient) normalize(km kalshiMarket) Market {
 		series = strings.ToLower(tickerParts[0])
 	}
 
+	desc := strings.TrimSpace(km.RulesPrimary)
+	if eventTitle != "" && desc != "" {
+		desc = eventTitle + ": " + desc
+	} else if eventTitle != "" {
+		desc = eventTitle
+	}
+
 	return Market{
-		Venue:    "KALSHI",
-		MarketID: km.Ticker,
-		Ticker:   km.Ticker,
-		Title:    km.Title,
-		Series:   series,
-		Category: km.Sector,
+		Venue:       "KALSHI",
+		MarketID:    km.Ticker,
+		Ticker:      km.Ticker,
+		Title:       km.Title,
+		Description: desc,
+		Series:      series,
+		Category:    km.Sector,
 		Outcomes: []Outcome{
 			{Name: "Yes", Price: km.YesBid},
 			{Name: "No", Price: km.NoBid},
@@ -118,6 +109,180 @@ func (c *KalshiClient) normalize(km kalshiMarket) Market {
 		OpenTime:  openTime,
 		CloseTime: closeTime,
 	}
+}
+
+type marketsResponse struct {
+	Markets []kalshiMarket `json:"markets"`
+	Cursor  string         `json:"cursor"`
+}
+
+func (c *KalshiClient) fetchPage(ctx context.Context, url string) (*marketsResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi request: %w", err)
+	}
+	c.signRequest(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi read: %w", err)
+	}
+
+	var result marketsResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("kalshi decode: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *KalshiClient) FetchMarkets(ctx context.Context) ([]Market, error) {
+	slog.Info("kalshi fetch starting")
+	start := time.Now()
+
+	// Phase 1: fetch bundles and collect event tickers from mve_selected_legs
+	bundles, eventTickers, err := c.fetchBundles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("kalshi bundles fetched", "count", len(bundles), "unique_events", len(eventTickers), "elapsed", time.Since(start).String())
+
+	// Phase 2: fetch individual event markets for each unique event ticker
+	eventMarkets, err := c.fetchEventMarkets(ctx, eventTickers)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("kalshi event markets fetched", "count", len(eventMarkets), "elapsed", time.Since(start).String())
+
+	// Event markets first so they get priority in the event bus channel
+	all := append(eventMarkets, bundles...)
+	slog.Info("kalshi fetch complete", "total", len(all), "bundles", len(bundles), "event_markets", len(eventMarkets), "elapsed", time.Since(start).String())
+	return all, nil
+}
+
+func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, map[string]bool, error) {
+	var all []Market
+	eventTickers := make(map[string]bool)
+	cursor := ""
+
+	for {
+		url := fmt.Sprintf("%s/markets?limit=1000&status=open", c.baseURL)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+
+		result, err := c.fetchPage(ctx, url)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, km := range result.Markets {
+			all = append(all, c.normalize(km))
+			for _, leg := range km.MveSelectedLegs {
+				if leg.EventTicker != "" {
+					eventTickers[leg.EventTicker] = true
+				}
+			}
+		}
+
+		if result.Cursor == "" || len(result.Markets) == 0 {
+			break
+		}
+		cursor = result.Cursor
+	}
+
+	return all, eventTickers, nil
+}
+
+func (c *KalshiClient) fetchEventMarkets(ctx context.Context, eventTickers map[string]bool) ([]Market, error) {
+	if len(eventTickers) == 0 {
+		return nil, nil
+	}
+
+	type result struct {
+		markets []Market
+		err     error
+	}
+
+	results := make(chan result, len(eventTickers))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 20) // 20 concurrent workers
+
+	for et := range eventTickers {
+		et := et
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			markets, err := c.fetchSingleEvent(ctx, et)
+			if err != nil {
+				slog.Warn("kalshi event markets fetch failed", "event_ticker", et, "error", err)
+				results <- result{err: err}
+				return
+			}
+			results <- result{markets: markets}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var all []Market
+	seen := make(map[string]bool)
+	for r := range results {
+		if r.err != nil {
+			continue
+		}
+		for _, m := range r.markets {
+			if !seen[m.MarketID] {
+				seen[m.MarketID] = true
+				all = append(all, m)
+			}
+		}
+	}
+
+	return all, nil
+}
+
+func (c *KalshiClient) fetchSingleEvent(ctx context.Context, eventTicker string) ([]Market, error) {
+	url := fmt.Sprintf("%s/events/%s", c.baseURL, eventTicker)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi event request: %w", err)
+	}
+	c.signRequest(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi event do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("kalshi event read: %w", err)
+	}
+
+	var result eventResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("kalshi event decode: %w", err)
+	}
+
+	eventTitle := strings.TrimSpace(result.Event.Title)
+	var markets []Market
+	for _, km := range result.Markets {
+		markets = append(markets, c.normalizeWithEvent(km, eventTitle))
+	}
+	return markets, nil
 }
 
 func (c *KalshiClient) signRequest(req *http.Request) {

@@ -126,7 +126,17 @@ func (h *Handler) PostEmbeddings(w http.ResponseWriter, r *http.Request) {
 		updated++
 	}
 
-	slog.InfoContext(ctx, "embeddings upserted", "count", updated)
+	firstID := ""
+	lastID := ""
+	sampleIDs := make([]string, 0, 5)
+	if len(req.Embeddings) > 0 {
+		firstID = req.Embeddings[0].ID
+		lastID = req.Embeddings[len(req.Embeddings)-1].ID
+		for i := 0; i < len(req.Embeddings); i += 50 {
+			sampleIDs = append(sampleIDs, req.Embeddings[i].ID[:8])
+		}
+	}
+	slog.InfoContext(ctx, "embeddings upserted", "count", updated, "first", firstID[:8], "last", lastID[:8], "remote", r.RemoteAddr, "ua", r.UserAgent(), "samples", sampleIDs)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(embeddingsResponse{Updated: updated}); err != nil {

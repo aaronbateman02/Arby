@@ -62,7 +62,7 @@ func main() {
 	met := metrics.New()
 	slog.Info("metrics initialized")
 
-	eventBus := bus.New(1000)
+	eventBus := bus.New(100000)
 	slog.Info("event bus initialized")
 
 	authenticator, err := auth.New(cfg.JWTSecretKey)
@@ -131,6 +131,12 @@ func main() {
 					Status:         "OPEN",
 					ResolutionDate: resDate,
 				}
+
+				if m.Category == "" {
+					m.Category = matching.CategorizeMarket(m.Venue, m.VenueMarketID, m.Title)
+				}
+				m.Subcategory = matching.SubcategorizeMarket(m.Venue, m.VenueMarketID, m.Title)
+				m.MarketType = matching.CategorizeMarketType(m.Title)
 
 				if err := matchingStore.UpsertMarket(ctx, m); err != nil {
 					slog.Error("upsert discovered market", "error", err, "market_id", discMarket.MarketID)

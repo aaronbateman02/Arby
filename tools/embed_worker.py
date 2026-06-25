@@ -6,8 +6,9 @@ Fetches unembedded markets via the Arby REST API, embeds them locally
 using BAAI/bge-large-en-v1.5, and writes embeddings back via the API.
 
 Usage:
-    pip install requests sentence-transformers torch
-    python embed_worker.py --host https://arby.nostrabotus.com --batch-size 64
+    python3 -m venv ~/embed-worker-venv
+    ~/embed-worker-venv/bin/pip install -r requirements.txt
+    ~/embed-worker-venv/bin/python embed_worker.py --host https://arby.nostrabotus.com --batch-size 64
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def post_embeddings(host: str, embeddings: list[dict[str, Any]]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Arby embedding worker")
-    parser.add_argument("--host", default="http://localhost:8087", help="Arby API base URL")
+    parser.add_argument("--host", default="https://arby.nostrabotus.com", help="Arby API base URL")
     parser.add_argument("--batch-size", type=int, default=64, help="Embedding batch size")
     parser.add_argument("--fetch-limit", type=int, default=2000, help="Markets per fetch")
     parser.add_argument("--sleep", type=int, default=10, help="Seconds to wait when queue is empty")
@@ -106,6 +107,9 @@ def main() -> None:
 
         log.info("Encoding %d texts ...", len(texts))
         vectors = model.encode(texts, batch_size=args.batch_size, normalize_embeddings=True, show_progress_bar=True)
+
+        print("DEBUG batch[0] ID after encode:", batch[0]["id"][:8] if batch else "EMPTY", flush=True)
+        print("DEBUG batch[50] ID after encode:", batch[50]["id"][:8] if len(batch) > 50 else "N/A", flush=True)
 
         embeddings = [
             {"id": m["id"], "vector": v.tolist()}
