@@ -1,145 +1,134 @@
 #!/usr/bin/env python3
-# Requires: pip install sentence-transformers requests
+"""
+embed_worker.py — standalone embedding worker for Arby
+
+Fetches unembedded markets via the Arby REST API, embeds them locally
+using BAAI/bge-large-en-v1.5, and writes embeddings back via the API.
+
+Usage:
+    pip install requests sentence-transformers torch
+    python embed_worker.py --host https://arby.nostrabotus.com --batch-size 64
+"""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import signal
 import sys
 import time
+from typing import Any
 
 import requests
 from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
 )
-logger = logging.getLogger(__name__)
+log = logging.getLogger("embed_worker")
 
-running = True
-
-
-def handle_shutdown(signum, frame):
-    global running
-    logger.info("shutting down")
-    running = False
+MODEL_NAME = "BAAI/bge-large-en-v1.5"
 
 
-def main():
-    global running
+def load_model(batch_size: int) -> SentenceTransformer:
+    log.info("Loading %s (batch_size=%d) ...", MODEL_NAME, batch_size)
+    model = SentenceTransformer(MODEL_NAME)
+    log.info("Model ready on %s", model.device)
+    return model
 
-    parser = argparse.ArgumentParser(description="Arby market embed worker")
-    parser.add_argument(
-        "--api-url",
-        default="http://localhost:8086",
-        help="Base URL of the Go monolith API",
+
+def fetch_unembedded(host: str, limit: int) -> list[dict[str, Any]]:
+    resp = requests.get(
+        f"{host}/api/v1/markets/unembedded",
+        params={"limit": limit},
+        timeout=30,
     )
-    parser.add_argument(
-        "--model-name",
-        default="BAAI/bge-large-en-v1.5",
-        help="Sentence-transformers model name",
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("markets", [])
+
+
+def post_embeddings(host: str, embeddings: list[dict[str, Any]]) -> int:
+    resp = requests.post(
+        f"{host}/api/v1/markets/embeddings",
+        json={"embeddings": embeddings},
+        timeout=60,
     )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=64,
-        help="Markets to fetch and embed per batch",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=int,
-        default=30,
-        help="Seconds to sleep when no work",
-    )
-    parser.add_argument(
-        "--rate-limit-sleep",
-        type=int,
-        default=60,
-        help="Seconds to sleep on 429",
-    )
-    parser.add_argument(
-        "--error-sleep",
-        type=int,
-        default=10,
-        help="Seconds to sleep on error",
-    )
+    resp.raise_for_status()
+    return resp.json().get("updated", 0)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Arby embedding worker")
+    parser.add_argument("--host", default="http://localhost:8087", help="Arby API base URL")
+    parser.add_argument("--batch-size", type=int, default=64, help="Embedding batch size")
+    parser.add_argument("--fetch-limit", type=int, default=2000, help="Markets per fetch")
+    parser.add_argument("--sleep", type=int, default=10, help="Seconds to wait when queue is empty")
     args = parser.parse_args()
 
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGTERM, handle_shutdown)
+    host = args.host.rstrip("/")
+    model = load_model(args.batch_size)
 
-    logger.info("loading model %s", args.model_name)
-    model = SentenceTransformer(args.model_name)
-    model = model.to("cpu")
-    logger.info("model loaded")
+    total_embedded = 0
+    empty_passes = 0
 
-    while running:
+    log.info("Starting embed worker against %s", host)
+
+    while True:
         try:
-            resp = requests.get(
-                f"{args.api_url}/api/v1/markets/unembedded",
-                params={"limit": args.batch_size},
-                timeout=30,
+            batch = fetch_unembedded(host, args.fetch_limit)
+        except requests.RequestException as e:
+            log.warning("Fetch failed: %s - retrying in 30s", e)
+            time.sleep(30)
+            continue
+
+        if not batch:
+            empty_passes += 1
+            log.info(
+                "No unembedded markets (pass %d). Total: %d. Sleeping %ds ...",
+                empty_passes, total_embedded, args.sleep,
             )
+            time.sleep(args.sleep)
+            continue
 
-            if resp.status_code == 429:
-                logger.warning(
-                    "rate limited, sleeping %ds", args.rate_limit_sleep
-                )
-                time.sleep(args.rate_limit_sleep)
-                continue
+        empty_passes = 0
+        log.info("Fetched %d unembedded markets", len(batch))
 
-            resp.raise_for_status()
-            data = resp.json()
-            market_list = data.get("markets", [])
-            if not market_list:
-                logger.info("no unembedded markets")
-                time.sleep(args.poll_interval)
-                continue
+        texts = []
+        for m in batch:
+            title = (m.get("title") or "").strip()
+            desc = (m.get("description") or "").strip()
+            if desc:
+                texts.append(f"{title}. {desc[:400]}")
+            else:
+                texts.append(title)
 
-            texts = []
-            for market in market_list:
-                embed_text = (
-                    market["title"]
-                    + ". "
-                    + market.get("description", "")[:400]
-                )
-                texts.append(embed_text)
+        log.info("Encoding %d texts ...", len(texts))
+        vectors = model.encode(texts, batch_size=args.batch_size, normalize_embeddings=True, show_progress_bar=True)
 
-            embeddings = model.encode(
-                texts, normalize_embeddings=True
-            ).tolist()
+        embeddings = [
+            {"id": m["id"], "vector": v.tolist()}
+            for m, v in zip(batch, vectors)
+        ]
 
-            payload = {
-                "embeddings": [
-                    {"id": market["id"], "vector": emb}
-                    for market, emb in zip(market_list, embeddings)
-                ]
-            }
+        try:
+            updated = post_embeddings(host, embeddings)
+        except requests.RequestException as e:
+            log.warning("Upload failed: %s - retrying in 30s", e)
+            time.sleep(30)
+            continue
 
-            post_resp = requests.post(
-                f"{args.api_url}/api/v1/markets/embeddings",
-                json=payload,
-                timeout=30,
-            )
+        total_embedded += updated
+        log.info("Wrote %d embeddings (session total: %d)", updated, total_embedded)
 
-            if post_resp.status_code == 429:
-                logger.warning(
-                    "rate limited on post, sleeping %ds",
-                    args.rate_limit_sleep,
-                )
-                time.sleep(args.rate_limit_sleep)
-                continue
-
-            post_resp.raise_for_status()
-            logger.info("upserted %d embeddings", len(market_list))
-
-        except Exception as e:
-            logger.error("error: %s", e)
-            if running:
-                time.sleep(args.error_sleep)
-
-    logger.info("shutting down")
+        if updated < len(batch):
+            log.warning("Expected %d updates, got %d - some may have failed", len(batch), updated)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        log.info("Interrupted")
+        sys.exit(0)
