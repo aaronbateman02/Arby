@@ -429,6 +429,82 @@ func (s *Store) GetMatchPairsWithDetails(ctx context.Context, status string) ([]
 	return pairs, nil
 }
 
+func (s *Store) SearchMarkets(ctx context.Context, venue, query string, limit int) ([]Market, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.pg.P().Query(ctx, `
+        SELECT id, venue, venue_market_id, COALESCE(title,''), COALESCE(description,''), COALESCE(category,'')
+        FROM markets
+        WHERE venue = $1
+          AND (title ILIKE '%' || $2 || '%' OR venue_market_id ILIKE '%' || $2 || '%')
+          AND status = 'OPEN'
+        ORDER BY
+            CASE WHEN title ILIKE $2 || '%' THEN 0 ELSE 1 END,
+            last_updated_at DESC
+        LIMIT $3
+    `, venue, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search markets: %w", err)
+	}
+	defer rows.Close()
+
+	var result []Market
+	for rows.Next() {
+		var m Market
+		if err := rows.Scan(&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description, &m.Category); err != nil {
+			return nil, fmt.Errorf("search markets scan: %w", err)
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetMatchPairsByMarket(ctx context.Context, marketID string) ([]matchPairResponse, error) {
+	rows, err := s.pg.P().Query(ctx, `
+        SELECT
+            mp.id,
+            mp.candidate_id,
+            ma.title AS market_a_title,
+            mb.title AS market_b_title,
+            ma.venue AS venue_a,
+            mb.venue AS venue_b,
+            COALESCE(mc.category, '') AS category,
+            COALESCE(mp.is_same_event, false) AS is_same_event,
+            COALESCE(mp.relationship, '') AS relationship,
+            COALESCE(mp.confidence, 0) AS confidence,
+            COALESCE(mp.reasoning, '') AS reasoning,
+            COALESCE(mp.leg_a_model, '') AS leg_a_model,
+            COALESCE(mp.leg_b_model, '') AS leg_b_model,
+            mp.status
+        FROM match_pairs mp
+        JOIN match_candidates mc ON mc.id = mp.candidate_id
+        JOIN markets ma ON ma.id = mc.market_a_id
+        JOIN markets mb ON mb.id = mc.market_b_id
+        WHERE mc.market_a_id = $1 OR mc.market_b_id = $1
+        ORDER BY mp.reviewed_at DESC, mc.created_at DESC
+    `, marketID)
+	if err != nil {
+		return nil, fmt.Errorf("get pairs by market: %w", err)
+	}
+	defer rows.Close()
+
+	var result []matchPairResponse
+	for rows.Next() {
+		var p matchPairResponse
+		if err := rows.Scan(
+			&p.ID, &p.CandidateID, &p.MarketATitle, &p.MarketBTitle,
+			&p.VenueA, &p.VenueB, &p.Category, &p.IsSameEvent,
+			&p.Relationship, &p.Confidence, &p.Reasoning,
+			&p.LegAModel, &p.LegBModel, &p.Status,
+		); err != nil {
+			return nil, fmt.Errorf("pairs by market scan: %w", err)
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) GetCandidateByID(ctx context.Context, id string) (*Candidate, error) {
 	sql := `SELECT id, market_a_id, market_b_id, similarity, category, status FROM match_candidates WHERE id = $1`
 	var c Candidate

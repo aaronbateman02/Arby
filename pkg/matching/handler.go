@@ -135,23 +135,77 @@ func (h *Handler) PostEmbeddings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetMatchPairs(w http.ResponseWriter, r *http.Request) {
+	if marketID := r.URL.Query().Get("market_id"); marketID != "" {
+		h.getMatchPairsByMarket(w, r, marketID)
+		return
+	}
 	status := r.URL.Query().Get("status")
-
 	pairs, err := h.store.GetMatchPairsWithDetails(r.Context(), status)
 	if err != nil {
 		slog.Error("get match pairs with details", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-
 	if pairs == nil {
 		pairs = []matchPairResponse{}
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{"pairs": pairs}); err != nil {
-		slog.Error("encode match pairs response", "error", err)
+	json.NewEncoder(w).Encode(map[string]any{"pairs": pairs})
+}
+
+func (h *Handler) SearchMarkets(w http.ResponseWriter, r *http.Request) {
+	venue := r.URL.Query().Get("venue")
+	query := r.URL.Query().Get("q")
+	limitStr := r.URL.Query().Get("limit")
+
+	if venue == "" || query == "" {
+		http.Error(w, "venue and q params required", http.StatusBadRequest)
+		return
 	}
+
+	limit := 20
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	ctx := r.Context()
+	markets, err := h.store.SearchMarkets(ctx, venue, query, limit)
+	if err != nil {
+		slog.Error("search markets", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]MarketResponse, 0, len(markets))
+	for _, m := range markets {
+		resp = append(resp, MarketResponse{
+			ID:            m.ID,
+			Venue:         m.Venue,
+			VenueMarketID: m.VenueMarketID,
+			Title:         m.Title,
+			Description:   m.Description,
+			Category:      m.Category,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"markets": resp})
+}
+
+func (h *Handler) getMatchPairsByMarket(w http.ResponseWriter, r *http.Request, marketID string) {
+	ctx := r.Context()
+	pairs, err := h.store.GetMatchPairsByMarket(ctx, marketID)
+	if err != nil {
+		slog.Error("get pairs by market", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if pairs == nil {
+		pairs = []matchPairResponse{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"pairs": pairs})
 }
 
 func (h *Handler) ApproveMatchPair(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +297,7 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) WireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/markets/unembedded", h.GetUnembedded)
 	mux.HandleFunc("POST /api/v1/markets/embeddings", h.PostEmbeddings)
+	mux.HandleFunc("GET /api/v1/matching/markets/search", h.SearchMarkets)
 	mux.HandleFunc("GET /api/v1/matching/pairs", h.GetMatchPairs)
 	mux.HandleFunc("POST /api/v1/matching/pairs/{id}/approve", h.ApproveMatchPair)
 	mux.HandleFunc("POST /api/v1/matching/pairs/{id}/reject", h.RejectMatchPair)
