@@ -97,7 +97,12 @@ func (r *Reviewer) Run(ctx context.Context) {
 }
 
 func (r *Reviewer) RunOnce(ctx context.Context) error {
-	candidates, err := r.store.GetPendingCandidatesWithMarkets(ctx, r.batchSize*4)
+	threshold, err := r.store.GetSimilarityThreshold(ctx)
+	if err != nil {
+		threshold = 0.80 // fallback
+	}
+
+	candidates, err := r.store.GetPendingCandidatesWithMarkets(ctx, r.batchSize*4, threshold)
 	if err != nil {
 		return fmt.Errorf("get pending candidates: %w", err)
 	}

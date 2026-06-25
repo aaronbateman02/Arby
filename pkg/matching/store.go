@@ -269,7 +269,7 @@ func (s *Store) GetPendingCandidates(ctx context.Context, limit int) ([]Candidat
 	return candidates, nil
 }
 
-func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int) ([]CandidateWithMarkets, error) {
+func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int, minSimilarity float64) ([]CandidateWithMarkets, error) {
 	sql := `
 	SELECT
 		c.id, c.market_a_id, c.market_b_id, c.similarity, c.category, c.status,
@@ -279,9 +279,10 @@ func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int) 
 	JOIN markets ma ON ma.id = c.market_a_id
 	JOIN markets mb ON mb.id = c.market_b_id
 	WHERE c.status = 'PENDING'
+	  AND c.similarity >= $2
 	LIMIT $1`
 
-	rows, err := s.pg.P().Query(ctx, sql, limit)
+	rows, err := s.pg.P().Query(ctx, sql, limit, minSimilarity)
 	if err != nil {
 		slog.Error("failed to query pending candidates with markets", "error", err)
 		return nil, fmt.Errorf("get pending candidates with markets: %w", err)

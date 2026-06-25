@@ -50,6 +50,11 @@ func (d *CandidateDiscoverer) Run(ctx context.Context) {
 }
 
 func (d *CandidateDiscoverer) RunOnce(ctx context.Context) error {
+	threshold, err := d.store.GetSimilarityThreshold(ctx)
+	if err != nil {
+		threshold = d.similarityThreshold // fallback to constructor default
+	}
+
 	markets, err := d.store.GetEmbeddedMarkets(ctx, 10000)
 	if err != nil {
 		return fmt.Errorf("get embedded markets: %w", err)
@@ -79,7 +84,7 @@ func (d *CandidateDiscoverer) RunOnce(ctx context.Context) error {
 			continue
 		}
 		for _, r := range results {
-			if r.Similarity >= d.similarityThreshold {
+			if r.Similarity >= threshold {
 				_ = d.store.InsertCandidate(ctx, Candidate{
 					MarketAID:  a.ID,
 					MarketBID:  r.ID,
@@ -99,7 +104,7 @@ func (d *CandidateDiscoverer) RunOnce(ctx context.Context) error {
 			continue
 		}
 		for _, r := range results {
-			if r.Similarity >= d.similarityThreshold {
+			if r.Similarity >= threshold {
 				_ = d.store.InsertCandidate(ctx, Candidate{
 					MarketAID:  a.ID,
 					MarketBID:  r.ID,
