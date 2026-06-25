@@ -652,6 +652,17 @@ type Stats struct {
 	PairsRejected        int `json:"pairs_rejected"`
 }
 
+type CategoryCount struct {
+	Venue    string `json:"venue"`
+	Category string `json:"category"`
+	Count    int    `json:"count"`
+}
+
+type PipelineCounts struct {
+	Events  []CategoryCount `json:"events"`
+	Markets []CategoryCount `json:"markets"`
+}
+
 func (s *Store) GetStats(ctx context.Context) (*Stats, error) {
 	var st Stats
 	err := s.pg.P().QueryRow(ctx, `
@@ -671,6 +682,40 @@ func (s *Store) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("get stats: %w", err)
 	}
 	return &st, nil
+}
+
+func (s *Store) GetPipelineCounts(ctx context.Context) (*PipelineCounts, error) {
+	pc := &PipelineCounts{}
+
+	rows, err := s.pg.P().Query(ctx,
+		`SELECT venue, COALESCE(category, 'Uncategorized'), COUNT(1) FROM events GROUP BY venue, category ORDER BY venue, category`)
+	if err != nil {
+		return nil, fmt.Errorf("get event counts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cc CategoryCount
+		if err := rows.Scan(&cc.Venue, &cc.Category, &cc.Count); err != nil {
+			return nil, err
+		}
+		pc.Events = append(pc.Events, cc)
+	}
+
+	rows2, err := s.pg.P().Query(ctx,
+		`SELECT venue, COALESCE(category, 'Uncategorized'), COUNT(1) FROM markets WHERE status = 'OPEN' GROUP BY venue, category ORDER BY venue, category`)
+	if err != nil {
+		return nil, fmt.Errorf("get market counts: %w", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var cc CategoryCount
+		if err := rows2.Scan(&cc.Venue, &cc.Category, &cc.Count); err != nil {
+			return nil, err
+		}
+		pc.Markets = append(pc.Markets, cc)
+	}
+
+	return pc, nil
 }
 
 func joinFloats(v []float64, sep string) string {

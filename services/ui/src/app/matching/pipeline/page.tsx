@@ -12,6 +12,17 @@ interface Stats {
   pairs_rejected: number
 }
 
+interface CategoryCount {
+  venue: string
+  category: string
+  count: number
+}
+
+interface PipelineCounts {
+  events: CategoryCount[]
+  markets: CategoryCount[]
+}
+
 const stages = [
   { key: "unembedded" as const, label: "Unembedded", desc: "Markets awaiting embedding" },
   { key: "embedded" as const, label: "Embedded", desc: "Markets with vector embeddings" },
@@ -22,25 +33,30 @@ const stages = [
 
 export default function PipelinePage() {
   const [stats, setStats] = useState<Stats | null>(null)
+  const [counts, setCounts] = useState<PipelineCounts | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchAll = async () => {
       try {
         setError("")
-        const res = await fetch("/api/matching/stats")
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        setStats(data)
+        const [statsRes, countsRes] = await Promise.all([
+          fetch("/api/matching/stats"),
+          fetch("/api/matching/pipeline-counts"),
+        ])
+        if (!statsRes.ok) throw new Error(`Stats HTTP ${statsRes.status}`)
+        if (!countsRes.ok) throw new Error(`Counts HTTP ${countsRes.status}`)
+        setStats(await statsRes.json())
+        setCounts(await countsRes.json())
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load stats")
+        setError(e instanceof Error ? e.message : "Failed to load data")
       } finally {
         setLoading(false)
       }
     }
-    fetchStats()
-    const interval = setInterval(fetchStats, 30_000)
+    fetchAll()
+    const interval = setInterval(fetchAll, 30_000)
     return () => clearInterval(interval)
   }, [])
 
@@ -93,6 +109,62 @@ export default function PipelinePage() {
           <p className="text-xs text-muted mb-0.5">Rejected</p>
           <p className="text-2xl font-bold text-red">{stats?.pairs_rejected ?? 0}</p>
         </div>
+      </div>
+
+      {counts && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <CountTable title="Events" data={counts.events} />
+          <CountTable title="Markets" data={counts.markets} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
+  const venues = [...new Set(data.map((d) => d.venue))]
+  const categories = [...new Set(data.map((d) => d.category))]
+  const getCount = (venue: string, cat: string) => data.find((d) => d.venue === venue && d.category === cat)?.count ?? 0
+  const venueTotals = venues.map((v) => data.filter((d) => d.venue === v).reduce((sum, d) => sum + d.count, 0))
+
+  return (
+    <div className="bg-surface-alt rounded-xl border border-border overflow-hidden">
+      <div className="px-5 py-3 border-b border-border">
+        <h2 className="text-sm font-semibold text-gray-200">{title}</h2>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left px-5 py-2 text-muted font-medium">Category</th>
+              {venues.map((v) => (
+                <th key={v} className="text-right px-4 py-2 text-muted font-medium">{v}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {categories.map((cat) => (
+              <tr key={cat} className="border-b border-border/50 last:border-0">
+                <td className="px-5 py-1.5 text-gray-300">{cat}</td>
+                {venues.map((v) => (
+                  <td key={v} className="text-right px-4 py-1.5 text-gray-200 tabular-nums">
+                    {getCount(v, cat).toLocaleString()}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border bg-white/5">
+              <td className="px-5 py-2 font-medium text-gray-200">Total</td>
+              {venueTotals.map((t, i) => (
+                <td key={i} className="text-right px-4 py-2 font-semibold text-gray-100 tabular-nums">
+                  {t.toLocaleString()}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>
   )
