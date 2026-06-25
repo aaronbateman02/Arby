@@ -12,17 +12,21 @@ type Outcome struct {
 }
 
 type Market struct {
-	Venue       string          `json:"venue"`
-	MarketID    string          `json:"market_id"`
-	Ticker      string          `json:"ticker"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Series      string          `json:"series"`
-	Category    string          `json:"category"`
-	Outcomes    []Outcome       `json:"outcomes"`
-	OpenTime    time.Time       `json:"open_time"`
-	CloseTime   time.Time       `json:"close_time"`
-	Extra       json.RawMessage `json:"extra,omitempty"`
+	Venue        string          `json:"venue"`
+	MarketID     string          `json:"market_id"`
+	Ticker       string          `json:"ticker"`
+	Title        string          `json:"title"`
+	Description  string          `json:"description"`
+	Series       string          `json:"series"`
+	Category     string          `json:"category"`
+	Outcomes     []Outcome       `json:"outcomes"`
+	OpenTime     time.Time       `json:"open_time"`
+	CloseTime    time.Time       `json:"close_time"`
+	Extra        json.RawMessage `json:"extra,omitempty"`
+
+	// Event context
+	VenueEventID  string `json:"venue_event_id,omitempty"`
+	EventTitle    string `json:"event_title,omitempty"`
 }
 
 type DiscoveryClient interface {

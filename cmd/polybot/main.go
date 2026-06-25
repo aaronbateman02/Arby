@@ -111,12 +111,38 @@ func main() {
 					continue
 				}
 
+				// Upsert event if we have event context
+				var eventID string
+				if discMarket.VenueEventID != "" {
+					e := matching.Event{
+						Venue:        discMarket.Venue,
+						VenueEventID: discMarket.VenueEventID,
+						Title:        discMarket.EventTitle,
+						Description:  discMarket.Description,
+						Category:     discMarket.Category,
+						Status:       "OPEN",
+					}
+					if !discMarket.CloseTime.IsZero() {
+						e.CloseTime = &discMarket.CloseTime
+					}
+					eid, err := matchingStore.UpsertEvent(ctx, e)
+					if err != nil {
+						slog.Error("upsert event", "error", err, "venue_event_id", discMarket.VenueEventID)
+						continue
+					}
+					eventID = eid
+				}
+
+				// Build description for embedding
 				desc := discMarket.Description
 				if desc == "" {
 					desc = discMarket.Title
 					if discMarket.Series != "" {
 						desc = discMarket.Series + " - " + discMarket.Title
 					}
+				}
+				if discMarket.EventTitle != "" && discMarket.EventTitle != discMarket.Title && discMarket.Description != "" {
+					desc = discMarket.EventTitle + ": " + discMarket.Title + ". " + discMarket.Description
 				}
 
 				var resDate *time.Time
@@ -127,6 +153,8 @@ func main() {
 				m := matching.Market{
 					Venue:          discMarket.Venue,
 					VenueMarketID:  discMarket.MarketID,
+					EventID:        eventID,
+					VenueEventID:   discMarket.VenueEventID,
 					Title:          discMarket.Title,
 					Description:    desc,
 					Category:       discMarket.Category,

@@ -14,10 +14,23 @@ import (
 	"github.com/aaronbateman02/Arby/internal/db"
 )
 
+type Event struct {
+	ID            string     `json:"id"`
+	Venue         string     `json:"venue"`
+	VenueEventID  string     `json:"venue_event_id"`
+	Title         string     `json:"title"`
+	Description   string     `json:"description"`
+	Category      string     `json:"category"`
+	Status        string     `json:"status"`
+	CloseTime     *time.Time `json:"close_time,omitempty"`
+}
+
 type Market struct {
 	ID             string     `json:"id"`
 	Venue          string     `json:"venue"`
 	VenueMarketID  string     `json:"venue_market_id"`
+	EventID        string     `json:"event_id,omitempty"`
+	VenueEventID   string     `json:"venue_event_id,omitempty"`
 	Title          string     `json:"title"`
 	Description    string     `json:"description"`
 	Category       string     `json:"category"`
@@ -68,10 +81,27 @@ func (s *Store) CreateTables(ctx context.Context) error {
 	CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 	CREATE EXTENSION IF NOT EXISTS "vector";
 
+	CREATE TABLE IF NOT EXISTS events (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		venue           VARCHAR(20) NOT NULL,
+		venue_event_id  VARCHAR(255) NOT NULL,
+		title           TEXT NOT NULL,
+		description     TEXT,
+		category        VARCHAR(100),
+		status          VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+		close_time      TIMESTAMPTZ,
+		first_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE (venue, venue_event_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_events_venue ON events(venue);
+
 	CREATE TABLE IF NOT EXISTS markets (
 		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		venue           VARCHAR(20) NOT NULL,
 		venue_market_id VARCHAR(255) NOT NULL,
+		event_id        UUID REFERENCES events(id),
+		venue_event_id  VARCHAR(255),
 		title           TEXT NOT NULL,
 		description     TEXT,
 		category        VARCHAR(100),
@@ -88,6 +118,7 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		UNIQUE (venue, venue_market_id)
 	);
 	CREATE INDEX IF NOT EXISTS idx_markets_venue ON markets(venue);
+	CREATE INDEX IF NOT EXISTS idx_markets_event ON markets(event_id);
 	CREATE INDEX IF NOT EXISTS idx_markets_embedding ON markets USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 	CREATE TABLE IF NOT EXISTS match_candidates (
@@ -130,11 +161,44 @@ func (s *Store) CreateTables(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) UpsertEvent(ctx context.Context, e Event) (string, error) {
+	sql := `
+	INSERT INTO events (venue, venue_event_id, title, description, category, status, close_time)
+	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	ON CONFLICT (venue, venue_event_id) DO UPDATE SET
+		title = EXCLUDED.title,
+		description = EXCLUDED.description,
+		category = EXCLUDED.category,
+		status = EXCLUDED.status,
+		close_time = EXCLUDED.close_time,
+		last_updated_at = NOW()
+	RETURNING id`
+
+	var id string
+	err := s.pg.P().QueryRow(ctx, sql,
+		e.Venue, e.VenueEventID, e.Title, e.Description, e.Category, e.Status, e.CloseTime,
+	).Scan(&id)
+	if err != nil {
+		slog.Error("failed to upsert event", "error", err, "venue", e.Venue, "venue_event_id", e.VenueEventID)
+		return "", fmt.Errorf("upsert event: %w", err)
+	}
+	return id, nil
+}
+
+func nullStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 	sql := `
-	INSERT INTO markets (venue, venue_market_id, title, description, category, subcategory, market_type, structure_type, status, resolution_date)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	INSERT INTO markets (venue, venue_market_id, event_id, venue_event_id, title, description, category, subcategory, market_type, structure_type, status, resolution_date)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	ON CONFLICT (venue, venue_market_id) DO UPDATE SET
+		event_id = COALESCE(EXCLUDED.event_id, markets.event_id),
+		venue_event_id = COALESCE(EXCLUDED.venue_event_id, markets.venue_event_id),
 		title = EXCLUDED.title,
 		description = EXCLUDED.description,
 		category = EXCLUDED.category,
@@ -146,8 +210,9 @@ func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 		last_updated_at = NOW()`
 
 	_, err := s.pg.P().Exec(ctx, sql,
-		m.Venue, m.VenueMarketID, m.Title, m.Description,
-		m.Category, m.Subcategory, m.MarketType, m.StructureType, m.Status, m.ResolutionDate,
+		m.Venue, m.VenueMarketID, nullStr(m.EventID), nullStr(m.VenueEventID),
+		m.Title, m.Description, m.Category, m.Subcategory, m.MarketType,
+		m.StructureType, m.Status, m.ResolutionDate,
 	)
 	if err != nil {
 		slog.Error("failed to upsert market", "error", err, "venue", m.Venue, "venue_market_id", m.VenueMarketID)
@@ -158,7 +223,7 @@ func (s *Store) UpsertMarket(ctx context.Context, m Market) error {
 
 func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, error) {
 	sql := `
-	SELECT id, venue, venue_market_id, title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
+	SELECT id, venue, venue_market_id, COALESCE(event_id::text, ''), COALESCE(venue_event_id, ''), title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
 	FROM markets
 	WHERE embedding IS NULL AND title != '' AND description IS NOT NULL AND description != ''
 	ORDER BY last_updated_at ASC
@@ -175,7 +240,8 @@ func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, 
 	for rows.Next() {
 		var m Market
 		if err := rows.Scan(
-			&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description,
+			&m.ID, &m.Venue, &m.VenueMarketID, &m.EventID, &m.VenueEventID,
+			&m.Title, &m.Description,
 			&m.Category, &m.Subcategory, &m.MarketType, &m.StructureType, &m.Status, &m.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan market row", "error", err)
@@ -191,7 +257,7 @@ func (s *Store) GetUnembeddedMarkets(ctx context.Context, limit int) ([]Market, 
 
 func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, error) {
 	sql := `
-	SELECT id, venue, venue_market_id, title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
+	SELECT id, venue, venue_market_id, COALESCE(event_id::text, ''), COALESCE(venue_event_id, ''), title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
 	FROM markets
 	WHERE embedding IS NOT NULL
 	ORDER BY last_updated_at DESC
@@ -208,7 +274,8 @@ func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, er
 	for rows.Next() {
 		var m Market
 		if err := rows.Scan(
-			&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description,
+			&m.ID, &m.Venue, &m.VenueMarketID, &m.EventID, &m.VenueEventID,
+			&m.Title, &m.Description,
 			&m.Category, &m.Subcategory, &m.MarketType, &m.StructureType, &m.Status, &m.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan market row", "error", err)
@@ -282,8 +349,8 @@ func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int, 
 	sql := `
 	SELECT
 		c.id, c.market_a_id, c.market_b_id, c.similarity, c.category, c.status,
-		ma.id, ma.venue, ma.venue_market_id, ma.title, COALESCE(ma.description, ''), COALESCE(ma.category, ''), COALESCE(ma.subcategory, ''), COALESCE(ma.market_type, ''), ma.structure_type, ma.status, ma.resolution_date,
-		mb.id, mb.venue, mb.venue_market_id, mb.title, COALESCE(mb.description, ''), COALESCE(mb.category, ''), COALESCE(mb.subcategory, ''), COALESCE(mb.market_type, ''), mb.structure_type, mb.status, mb.resolution_date
+		ma.id, ma.venue, ma.venue_market_id, COALESCE(ma.event_id::text, ''), COALESCE(ma.venue_event_id, ''), ma.title, COALESCE(ma.description, ''), COALESCE(ma.category, ''), COALESCE(ma.subcategory, ''), COALESCE(ma.market_type, ''), ma.structure_type, ma.status, ma.resolution_date,
+		mb.id, mb.venue, mb.venue_market_id, COALESCE(mb.event_id::text, ''), COALESCE(mb.venue_event_id, ''), mb.title, COALESCE(mb.description, ''), COALESCE(mb.category, ''), COALESCE(mb.subcategory, ''), COALESCE(mb.market_type, ''), mb.structure_type, mb.status, mb.resolution_date
 	FROM match_candidates c
 	JOIN markets ma ON ma.id = c.market_a_id
 	JOIN markets mb ON mb.id = c.market_b_id
@@ -303,9 +370,9 @@ func (s *Store) GetPendingCandidatesWithMarkets(ctx context.Context, limit int, 
 		var cwm CandidateWithMarkets
 		if err := rows.Scan(
 			&cwm.ID, &cwm.MarketAID, &cwm.MarketBID, &cwm.Similarity, &cwm.Category, &cwm.Status,
-			&cwm.MarketA.ID, &cwm.MarketA.Venue, &cwm.MarketA.VenueMarketID, &cwm.MarketA.Title, &cwm.MarketA.Description,
+			&cwm.MarketA.ID, &cwm.MarketA.Venue, &cwm.MarketA.VenueMarketID, &cwm.MarketA.EventID, &cwm.MarketA.VenueEventID, &cwm.MarketA.Title, &cwm.MarketA.Description,
 			&cwm.MarketA.Category, &cwm.MarketA.Subcategory, &cwm.MarketA.MarketType, &cwm.MarketA.StructureType, &cwm.MarketA.Status, &cwm.MarketA.ResolutionDate,
-			&cwm.MarketB.ID, &cwm.MarketB.Venue, &cwm.MarketB.VenueMarketID, &cwm.MarketB.Title, &cwm.MarketB.Description,
+			&cwm.MarketB.ID, &cwm.MarketB.Venue, &cwm.MarketB.VenueMarketID, &cwm.MarketB.EventID, &cwm.MarketB.VenueEventID, &cwm.MarketB.Title, &cwm.MarketB.Description,
 			&cwm.MarketB.Category, &cwm.MarketB.Subcategory, &cwm.MarketB.MarketType, &cwm.MarketB.StructureType, &cwm.MarketB.Status, &cwm.MarketB.ResolutionDate,
 		); err != nil {
 			slog.Error("failed to scan candidate with markets row", "error", err)
@@ -444,7 +511,7 @@ func (s *Store) SearchMarkets(ctx context.Context, venue, query string, limit in
 		limit = 20
 	}
 	rows, err := s.pg.P().Query(ctx, `
-        SELECT id, venue, venue_market_id, COALESCE(title,''), COALESCE(description,''), COALESCE(category,'')
+        SELECT id, venue, venue_market_id, COALESCE(event_id::text, ''), COALESCE(venue_event_id, ''), COALESCE(title,''), COALESCE(description,''), COALESCE(category,'')
         FROM markets
         WHERE venue = $1
           AND (title ILIKE '%' || $2 || '%' OR venue_market_id ILIKE '%' || $2 || '%')
@@ -462,7 +529,7 @@ func (s *Store) SearchMarkets(ctx context.Context, venue, query string, limit in
 	var result []Market
 	for rows.Next() {
 		var m Market
-		if err := rows.Scan(&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description, &m.Category); err != nil {
+		if err := rows.Scan(&m.ID, &m.Venue, &m.VenueMarketID, &m.EventID, &m.VenueEventID, &m.Title, &m.Description, &m.Category); err != nil {
 			return nil, fmt.Errorf("search markets scan: %w", err)
 		}
 		result = append(result, m)
@@ -532,10 +599,10 @@ func (s *Store) GetCandidateByID(ctx context.Context, id string) (*Candidate, er
 }
 
 func (s *Store) GetMarketByID(ctx context.Context, id string) (*Market, error) {
-	sql := `SELECT id, venue, venue_market_id, title, description, category, structure_type, status, resolution_date FROM markets WHERE id = $1`
+	sql := `SELECT id, venue, venue_market_id, COALESCE(event_id::text, ''), COALESCE(venue_event_id, ''), title, description, category, structure_type, status, resolution_date FROM markets WHERE id = $1`
 	var m Market
 	err := s.pg.P().QueryRow(ctx, sql, id).Scan(
-		&m.ID, &m.Venue, &m.VenueMarketID, &m.Title, &m.Description,
+		&m.ID, &m.Venue, &m.VenueMarketID, &m.EventID, &m.VenueEventID, &m.Title, &m.Description,
 		&m.Category, &m.StructureType, &m.Status, &m.ResolutionDate,
 	)
 	if err != nil {

@@ -87,21 +87,16 @@ func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Ma
 		series = strings.ToLower(tickerParts[0])
 	}
 
-	desc := strings.TrimSpace(km.RulesPrimary)
-	if eventTitle != "" && desc != "" {
-		desc = eventTitle + ": " + desc
-	} else if eventTitle != "" {
-		desc = eventTitle
-	}
-
 	return Market{
-		Venue:       "KALSHI",
-		MarketID:    km.Ticker,
-		Ticker:      km.Ticker,
-		Title:       km.Title,
-		Description: desc,
-		Series:      series,
-		Category:    km.Sector,
+		Venue:        "KALSHI",
+		MarketID:     km.Ticker,
+		Ticker:       km.Ticker,
+		Title:        km.Title,
+		Description:  strings.TrimSpace(km.RulesPrimary),
+		Series:       series,
+		Category:     km.Sector,
+		VenueEventID: km.EventTicker,
+		EventTitle:   eventTitle,
 		Outcomes: []Outcome{
 			{Name: "Yes", Price: km.YesBid},
 			{Name: "No", Price: km.NoBid},
