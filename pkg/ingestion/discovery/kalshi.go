@@ -146,29 +146,35 @@ func (c *KalshiClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 	slog.Info("kalshi fetch starting")
 	start := time.Now()
 
-	// Phase 1: fetch bundles and collect event tickers from mve_selected_legs
-	bundles, eventTickers, err := c.fetchBundles(ctx)
+	// Phase 1: fetch bundles (for price data / reference)
+	bundles, err := c.fetchBundles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("kalshi bundles fetched", "count", len(bundles), "unique_events", len(eventTickers), "elapsed", time.Since(start).String())
+	slog.Info("kalshi bundles fetched", "count", len(bundles), "elapsed", time.Since(start).String())
 
-	// Phase 2: fetch individual event markets for each unique event ticker
+	// Phase 2: paginate through /events list to discover ALL individual events
+	eventTickers, err := c.fetchEventTickers(ctx)
+	if err != nil {
+		slog.Warn("kalshi event list fetch failed, continuing with bundles only", "error", err)
+	}
+	slog.Info("kalshi events discovered", "count", len(eventTickers), "elapsed", time.Since(start).String())
+
+	// Phase 3: fetch individual markets for each discovered event
 	eventMarkets, err := c.fetchEventMarkets(ctx, eventTickers)
 	if err != nil {
 		return nil, err
 	}
 	slog.Info("kalshi event markets fetched", "count", len(eventMarkets), "elapsed", time.Since(start).String())
 
-	// Event markets first so they get priority in the event bus channel
+	// Event markets first so they get priority in the event bus channel (bundles are lower quality)
 	all := append(eventMarkets, bundles...)
 	slog.Info("kalshi fetch complete", "total", len(all), "bundles", len(bundles), "event_markets", len(eventMarkets), "elapsed", time.Since(start).String())
 	return all, nil
 }
 
-func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, map[string]bool, error) {
+func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, error) {
 	var all []Market
-	eventTickers := make(map[string]bool)
 	cursor := ""
 
 	for {
@@ -179,16 +185,11 @@ func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, map[string]b
 
 		result, err := c.fetchPage(ctx, url)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		for _, km := range result.Markets {
 			all = append(all, c.normalize(km))
-			for _, leg := range km.MveSelectedLegs {
-				if leg.EventTicker != "" {
-					eventTickers[leg.EventTicker] = true
-				}
-			}
 		}
 
 		if result.Cursor == "" || len(result.Markets) == 0 {
@@ -197,7 +198,57 @@ func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, map[string]b
 		cursor = result.Cursor
 	}
 
-	return all, eventTickers, nil
+	return all, nil
+}
+
+type eventsListResponse struct {
+	Events []kalshiEvent `json:"events"`
+	Cursor string        `json:"cursor"`
+}
+
+func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, error) {
+	tickers := make(map[string]bool)
+	cursor := ""
+	limit := 500
+
+	for {
+		url := fmt.Sprintf("%s/events?limit=%d&status=open", c.baseURL, limit)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.signRequest(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		var list eventsListResponse
+		if err := json.Unmarshal(body, &list); err != nil {
+			return nil, fmt.Errorf("events list decode: %w", err)
+		}
+
+		for _, e := range list.Events {
+			tickers[e.EventTicker] = true
+		}
+
+		if list.Cursor == "" || len(list.Events) < limit {
+			break
+		}
+		cursor = list.Cursor
+	}
+
+	return tickers, nil
 }
 
 func (c *KalshiClient) fetchEventMarkets(ctx context.Context, eventTickers map[string]bool) ([]Market, error) {

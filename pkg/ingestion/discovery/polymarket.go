@@ -17,7 +17,7 @@ type PolymarketClient struct {
 
 func NewPolymarketClient() *PolymarketClient {
 	return &PolymarketClient{
-		baseURL:    "https://gamma-api.polymarket.com",
+		baseURL:    "https://clob.polymarket.com",
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -28,64 +28,15 @@ func (c *PolymarketClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 	slog.Info("polymarket fetch starting")
 	start := time.Now()
 
-	events, err := c.fetchEvents(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var all []Market
-	for _, e := range events {
-		for _, m := range e.Markets {
-			if !m.Active {
-				continue
-			}
-			all = append(all, c.normalize(e, m))
-		}
-	}
-
-	slog.Info("polymarket fetch complete", "events", len(events), "markets", len(all), "elapsed", time.Since(start).String())
-	return all, nil
-}
-
-type pmEvent struct {
-	ID          string        `json:"id"`
-	Slug        string        `json:"slug"`
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	StartDate   string        `json:"startDate"`
-	EndDate     string        `json:"endDate"`
-	Active      bool          `json:"active"`
-	Closed      bool          `json:"closed"`
-	Markets     []pmMarket    `json:"markets"`
-	Tags        []pmTag       `json:"tags"`
-}
-
-type pmTag struct {
-	ID    json.Number `json:"id"`
-	Label string      `json:"label"`
-	Slug  string      `json:"slug"`
-}
-
-type pmMarket struct {
-	ID          string `json:"id"`
-	Question    string `json:"question"`
-	ConditionID string `json:"conditionId"`
-	Slug        string `json:"slug"`
-	Description string `json:"description"`
-	Outcomes    string `json:"outcomes"`
-	EndDateISO  string `json:"endDateIso"`
-	Active      bool   `json:"active"`
-	Closed      bool   `json:"closed"`
-}
-
-func (c *PolymarketClient) fetchEvents(ctx context.Context) ([]pmEvent, error) {
-	var all []pmEvent
-	offset := 0
-	limit := 500
+	nextCursor := ""
+	var result []Market
+	seen := make(map[string]bool)
 
 	for {
-		url := fmt.Sprintf("%s/events?active=true&closed=false&limit=%d&offset=%d&order=id&ascending=true",
-			c.baseURL, limit, offset)
+		url := fmt.Sprintf("%s/markets?limit=1000", c.baseURL)
+		if nextCursor != "" {
+			url += "&next_cursor=" + nextCursor
+		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
@@ -96,62 +47,79 @@ func (c *PolymarketClient) fetchEvents(ctx context.Context) ([]pmEvent, error) {
 		if err != nil {
 			return nil, fmt.Errorf("polymarket do: %w", err)
 		}
-		defer resp.Body.Close()
-
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("polymarket read: %w", err)
 		}
 
-		var events []pmEvent
-		if err := json.Unmarshal(body, &events); err != nil {
+		var wrapper struct {
+			Data       []polymarketMarket `json:"data"`
+			NextCursor string             `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(body, &wrapper); err != nil {
 			return nil, fmt.Errorf("polymarket decode: %w", err)
 		}
 
-		all = append(all, events...)
+		for _, pm := range wrapper.Data {
+			if seen[pm.ConditionID] {
+				continue
+			}
+			seen[pm.ConditionID] = true
+			result = append(result, c.normalize(pm))
+		}
 
-		if len(events) < limit {
+		if wrapper.NextCursor == "" || len(wrapper.Data) < 1000 {
 			break
 		}
-		offset += limit
+		nextCursor = wrapper.NextCursor
 	}
 
-	return all, nil
+	slog.Info("polymarket fetch complete", "markets", len(result), "elapsed", time.Since(start).String())
+	return result, nil
 }
 
-func (c *PolymarketClient) normalize(e pmEvent, m pmMarket) Market {
+type polymarketToken struct {
+	TokenID string  `json:"token_id"`
+	Outcome string  `json:"outcome"`
+	Price   float64 `json:"price"`
+}
+
+type polymarketMarket struct {
+	ConditionID string             `json:"condition_id"`
+	Question    string             `json:"question"`
+	MarketSlug  string             `json:"market_slug"`
+	Description string             `json:"description"`
+	EndDateISO  string             `json:"end_date_iso"`
+	Tokens      []polymarketToken  `json:"tokens"`
+}
+
+func (c *PolymarketClient) normalize(pm polymarketMarket) Market {
 	var closeTime time.Time
-	if m.EndDateISO != "" {
-		closeTime, _ = time.Parse("2006-01-02", m.EndDateISO)
+	if pm.EndDateISO != "" {
+		closeTime, _ = time.Parse(time.RFC3339, pm.EndDateISO)
 	}
 
-	ticker := m.Slug
+	ticker := pm.MarketSlug
 	if ticker == "" {
-		ticker = m.ConditionID
+		ticker = pm.ConditionID
 	}
 
-	var outcomes []Outcome
-	var outcomeNames []string
-	if m.Outcomes != "" {
-		if err := json.Unmarshal([]byte(m.Outcomes), &outcomeNames); err == nil {
-			for _, name := range outcomeNames {
-				outcomes = append(outcomes, Outcome{Name: name})
-			}
-		}
+	outcomes := make([]Outcome, len(pm.Tokens))
+	for i, t := range pm.Tokens {
+		outcomes[i] = Outcome{Name: t.Outcome, Price: t.Price}
 	}
 	if len(outcomes) == 0 {
 		outcomes = []Outcome{{Name: "Yes"}, {Name: "No"}}
 	}
 
 	return Market{
-		Venue:        "POLYMARKET",
-		MarketID:     m.ConditionID,
-		Ticker:       ticker,
-		Title:        m.Question,
-		Description:  m.Description,
-		VenueEventID: e.ID,
-		EventTitle:   e.Title,
-		Outcomes:     outcomes,
-		CloseTime:    closeTime,
+		Venue:       "POLYMARKET",
+		MarketID:    pm.ConditionID,
+		Ticker:      ticker,
+		Title:       pm.Question,
+		Description: pm.Description,
+		Outcomes:    outcomes,
+		CloseTime:   closeTime,
 	}
 }
