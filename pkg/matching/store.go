@@ -685,7 +685,10 @@ func (s *Store) GetStats(ctx context.Context) (*Stats, error) {
 }
 
 func (s *Store) GetPipelineCounts(ctx context.Context) (*PipelineCounts, error) {
-	pc := &PipelineCounts{}
+	pc := &PipelineCounts{
+		Events:  make([]CategoryCount, 0),
+		Markets: make([]CategoryCount, 0),
+	}
 
 	rows, err := s.pg.P().Query(ctx,
 		`SELECT venue, COALESCE(category, 'Uncategorized'), COUNT(1) FROM events GROUP BY venue, category ORDER BY venue, category`)

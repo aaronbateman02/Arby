@@ -122,8 +122,8 @@ export default function PipelinePage() {
 }
 
 function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
-  const venues = Array.from(new Set(data.map((d) => d.venue)))
-  const categories = Array.from(new Set(data.map((d) => d.category)))
+  const venues = Array.from(new Set((data || []).map((d) => d.venue)))
+  const categories = Array.from(new Set((data || []).map((d) => d.category)))
   const getCount = (venue: string, cat: string) => data.find((d) => d.venue === venue && d.category === cat)?.count ?? 0
   const venueTotals = venues.map((v) => data.filter((d) => d.venue === v).reduce((sum, d) => sum + d.count, 0))
 
