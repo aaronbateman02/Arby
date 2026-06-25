@@ -2,17 +2,26 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useState } from "react"
 
 const navItems = [
   { label: "Dashboard", href: "/", icon: GridIcon },
   { label: "Markets", href: "/markets", icon: ChartIcon },
   { label: "Strategies", href: "/strategies", icon: BundleIcon },
-  { label: "Review", href: "/review", icon: ReviewIcon },
   { label: "Settings", href: "/settings", icon: GearIcon },
+]
+
+const matchingSubItems = [
+  { label: "Pipeline", href: "/matching/pipeline" },
+  { label: "Review", href: "/matching/review" },
+  { label: "Settings", href: "/matching/settings" },
 ]
 
 export function Sidebar() {
   const path = usePathname()
+  const [matchingOpen, setMatchingOpen] = useState(path.startsWith("/matching"))
+  const inMatching = path.startsWith("/matching")
+
   return (
     <aside className="w-16 lg:w-56 bg-surface-alt border-r border-border flex flex-col shrink-0">
       <div className="h-14 flex items-center justify-center lg:justify-start lg:px-5 border-b border-border">
@@ -37,6 +46,43 @@ export function Sidebar() {
             </Link>
           )
         })}
+        <button
+          onClick={() => setMatchingOpen(!matchingOpen)}
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors w-full text-left ${
+            inMatching
+              ? "bg-accent/10 text-accent"
+              : "text-muted hover:text-gray-200 hover:bg-surface-hover"
+          }`}
+        >
+          <LayersIcon active={inMatching && matchingOpen} />
+          <span className="hidden lg:inline flex-1">Matching</span>
+          <svg
+            className={`hidden lg:block w-4 h-4 transition-transform ${matchingOpen ? "rotate-90" : ""}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+        {matchingOpen && (
+          <div className="ml-3 border-l border-border pl-2 flex flex-col gap-1">
+            {matchingSubItems.map((item) => {
+              const active = path === item.href
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    active
+                      ? "bg-accent/10 text-accent"
+                      : "text-muted hover:text-gray-200 hover:bg-surface-hover"
+                  }`}
+                >
+                  <span className="hidden lg:inline">{item.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </nav>
       <div className="p-2 border-t border-border">
         <div className="flex items-center gap-3 px-3 py-2 text-xs text-muted">
@@ -77,11 +123,11 @@ function BundleIcon({ active }: { active: boolean }) {
   )
 }
 
-function ReviewIcon({ active }: { active: boolean }) {
+function LayersIcon({ active }: { active: boolean }) {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={active ? 2 : 1.5}
-        d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
+        d="M12 4.5l8.25 4.5L12 13.5 3.75 9 12 4.5zM3.75 13.5L12 18l8.25-4.5M3.75 18L12 22.5l8.25-4.5" />
     </svg>
   )
 }
