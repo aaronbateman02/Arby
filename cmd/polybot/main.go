@@ -111,9 +111,12 @@ func main() {
 					continue
 				}
 
-				desc := discMarket.Title
-				if discMarket.Series != "" {
-					desc = discMarket.Series + " - " + discMarket.Title
+				desc := discMarket.Description
+				if desc == "" {
+					desc = discMarket.Title
+					if discMarket.Series != "" {
+						desc = discMarket.Series + " - " + discMarket.Title
+					}
 				}
 
 				var resDate *time.Time
