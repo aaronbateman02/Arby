@@ -210,6 +210,7 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 	tickers := make(map[string]bool)
 	cursor := ""
 	limit := 500
+	pages := 0
 
 	for {
 		url := fmt.Sprintf("%s/events?limit=%d&status=open", c.baseURL, limit)
@@ -225,7 +226,8 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			slog.Warn("kalshi events list request failed", "error", err)
+			return tickers, nil // return what we have so far
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -233,14 +235,22 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 			return nil, err
 		}
 
+		slog.Info("kalshi events list page", "page", pages, "status", resp.StatusCode, "body_len", len(body))
+
 		var list eventsListResponse
 		if err := json.Unmarshal(body, &list); err != nil {
-			return nil, fmt.Errorf("events list decode: %w", err)
+			preview := string(body)
+			if len(preview) > 300 {
+				preview = preview[:300]
+			}
+			slog.Warn("kalshi events list decode failed", "error", err, "body_preview", preview)
+			return tickers, nil
 		}
 
 		for _, e := range list.Events {
 			tickers[e.EventTicker] = true
 		}
+		pages++
 
 		if list.Cursor == "" || len(list.Events) < limit {
 			break
@@ -248,6 +258,7 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 		cursor = list.Cursor
 	}
 
+	slog.Info("kalshi events list complete", "pages", pages, "tickers", len(tickers))
 	return tickers, nil
 }
 
