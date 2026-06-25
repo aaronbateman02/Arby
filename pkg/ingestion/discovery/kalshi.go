@@ -176,6 +176,7 @@ func (c *KalshiClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, error) {
 	var all []Market
 	cursor := ""
+	page := 0
 
 	for {
 		url := fmt.Sprintf("%s/markets?limit=1000&status=open", c.baseURL)
@@ -191,11 +192,17 @@ func (c *KalshiClient) fetchBundles(ctx context.Context) ([]Market, error) {
 		for _, km := range result.Markets {
 			all = append(all, c.normalize(km))
 		}
+		page++
 
 		if result.Cursor == "" || len(result.Markets) == 0 {
 			break
 		}
 		cursor = result.Cursor
+
+		// Small delay to avoid rate limiting
+		if page%5 == 0 {
+			time.Sleep(1 * time.Second)
+		}
 	}
 
 	return all, nil
@@ -212,6 +219,9 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 	limit := 500
 	pages := 0
 
+	// Wait for rate limit to cool down after bundle fetching
+	time.Sleep(2 * time.Second)
+
 	for {
 		url := fmt.Sprintf("%s/events?limit=%d&status=open", c.baseURL, limit)
 		if cursor != "" {
@@ -227,8 +237,20 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			slog.Warn("kalshi events list request failed", "error", err)
-			return tickers, nil // return what we have so far
+			return tickers, nil
 		}
+
+		// Handle rate limiting with exponential backoff
+		if resp.StatusCode == 429 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			backoff := time.Duration(3+pages) * time.Second
+			slog.Warn("kalshi events list rate limited", "page", pages, "backoff", backoff, "body", string(body[:min(len(body),100)]))
+			time.Sleep(backoff)
+			pages++
+			continue
+		}
+
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
