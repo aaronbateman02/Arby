@@ -216,11 +216,10 @@ type eventsListResponse struct {
 func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, error) {
 	tickers := make(map[string]bool)
 	cursor := ""
-	limit := 500
+	limit := 200
 	pages := 0
 
-	// Wait for rate limit to cool down after bundle fetching
-	time.Sleep(2 * time.Second)
+	time.Sleep(2 * time.Second) // cool down after bundle fetch
 
 	for {
 		url := fmt.Sprintf("%s/events?limit=%d&status=open", c.baseURL, limit)
@@ -228,45 +227,16 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 			url += "&cursor=" + cursor
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return nil, err
-		}
-		c.signRequest(req)
-
-		resp, err := c.httpClient.Do(req)
+		body, err := c.doRequest(ctx, url)
 		if err != nil {
 			slog.Warn("kalshi events list request failed", "error", err)
-			return tickers, nil
+			break
 		}
-
-		// Handle rate limiting with exponential backoff
-		if resp.StatusCode == 429 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			backoff := time.Duration(3+pages) * time.Second
-			slog.Warn("kalshi events list rate limited", "page", pages, "backoff", backoff, "body", string(body[:min(len(body),100)]))
-			time.Sleep(backoff)
-			pages++
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-
-		slog.Info("kalshi events list page", "page", pages, "status", resp.StatusCode, "body_len", len(body))
 
 		var list eventsListResponse
 		if err := json.Unmarshal(body, &list); err != nil {
-			preview := string(body)
-			if len(preview) > 300 {
-				preview = preview[:300]
-			}
-			slog.Warn("kalshi events list decode failed", "error", err, "body_preview", preview)
-			return tickers, nil
+			slog.Warn("kalshi events list decode failed", "error", err)
+			break
 		}
 
 		for _, e := range list.Events {
@@ -278,10 +248,47 @@ func (c *KalshiClient) fetchEventTickers(ctx context.Context) (map[string]bool, 
 			break
 		}
 		cursor = list.Cursor
+
+		if pages%3 == 0 {
+			time.Sleep(1 * time.Second)
+		}
 	}
 
 	slog.Info("kalshi events list complete", "pages", pages, "tickers", len(tickers))
 	return tickers, nil
+}
+
+func (c *KalshiClient) doRequest(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.signRequest(req)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == 429 {
+			backoff := time.Duration(2+attempt) * time.Second
+			slog.Warn("kalshi rate limited", "attempt", attempt, "backoff", backoff)
+			time.Sleep(backoff)
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("kalshi HTTP %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		}
+
+		return body, nil
+	}
+	return nil, fmt.Errorf("kalshi rate limited after 3 attempts")
 }
 
 func (c *KalshiClient) fetchEventMarkets(ctx context.Context, eventTickers map[string]bool) ([]Market, error) {
