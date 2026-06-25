@@ -31,6 +31,8 @@ func (c *PolymarketClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 	nextCursor := ""
 	var result []Market
 	seen := make(map[string]bool)
+	pages := 0
+	maxPages := 10
 
 	for {
 		url := fmt.Sprintf("%s/markets?limit=1000", c.baseURL)
@@ -68,14 +70,16 @@ func (c *PolymarketClient) FetchMarkets(ctx context.Context) ([]Market, error) {
 			seen[pm.ConditionID] = true
 			result = append(result, c.normalize(pm))
 		}
+		pages++
+		slog.Info("polymarket page", "page", pages, "count", len(wrapper.Data), "total", len(result), "elapsed", time.Since(start).String())
 
-		if wrapper.NextCursor == "" || len(wrapper.Data) < 1000 {
+		if wrapper.NextCursor == "" || len(wrapper.Data) < 1000 || pages >= maxPages {
 			break
 		}
 		nextCursor = wrapper.NextCursor
 	}
 
-	slog.Info("polymarket fetch complete", "markets", len(result), "elapsed", time.Since(start).String())
+	slog.Info("polymarket fetch complete", "markets", len(result), "pages", pages, "elapsed", time.Since(start).String())
 	return result, nil
 }
 
