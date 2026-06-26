@@ -724,6 +724,103 @@ func (s *Store) GetPipelineCounts(ctx context.Context) (*PipelineCounts, error) 
 	return pc, nil
 }
 
+type SimilarityPair struct {
+	MarketAID  string  `json:"market_a_id"`
+	MarketBID  string  `json:"market_b_id"`
+	Similarity float64 `json:"similarity"`
+	MarketA    Market  `json:"market_a"`
+	MarketB    Market  `json:"market_b"`
+}
+
+func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]SimilarityPair, error) {
+	rows, err := s.pg.P().Query(ctx, `
+		WITH kalshi AS (
+			SELECT id, embedding FROM markets
+			WHERE venue='KALSHI' AND embedding IS NOT NULL
+			  AND (resolution_date IS NULL OR resolution_date > NOW())
+			LIMIT 5000
+		),
+		ranked AS (
+			SELECT k.id AS kid, m.id AS pid,
+				1 - (k.embedding <=> m.embedding) AS sim
+			FROM kalshi k
+			CROSS JOIN LATERAL (
+				SELECT id, embedding FROM markets
+				WHERE venue='POLYMARKET' AND embedding IS NOT NULL
+				  AND (resolution_date IS NULL OR resolution_date > NOW())
+				ORDER BY k.embedding <=> markets.embedding
+				LIMIT 5
+			) m
+		)
+		SELECT kid, pid, sim FROM ranked ORDER BY sim DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("top similarities: %w", err)
+	}
+	defer rows.Close()
+
+	var pairs []SimilarityPair
+	for rows.Next() {
+		var p SimilarityPair
+		if err := rows.Scan(&p.MarketAID, &p.MarketBID, &p.Similarity); err != nil {
+			return nil, fmt.Errorf("scan similarity: %w", err)
+		}
+		pairs = append(pairs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Batch-load market details
+	idSet := make(map[string]bool)
+	for _, p := range pairs {
+		idSet[p.MarketAID] = true
+		idSet[p.MarketBID] = true
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	markets, err := s.batchGetMarkets(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pairs {
+		pairs[i].MarketA = markets[pairs[i].MarketAID]
+		pairs[i].MarketB = markets[pairs[i].MarketBID]
+	}
+
+	return pairs, nil
+}
+
+func (s *Store) batchGetMarkets(ctx context.Context, ids []string) (map[string]Market, error) {
+	if len(ids) == 0 {
+		return map[string]Market{}, nil
+	}
+	rows, err := s.pg.P().Query(ctx, `
+		SELECT id, venue, venue_market_id, COALESCE(event_id::text,''), COALESCE(venue_event_id,''),
+		       title, COALESCE(description,''), COALESCE(category,''), COALESCE(subcategory,''),
+		       COALESCE(market_type,''), structure_type, status, resolution_date
+		FROM markets WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("batch get markets: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]Market, len(ids))
+	for rows.Next() {
+		var m Market
+		if err := rows.Scan(
+			&m.ID, &m.Venue, &m.VenueMarketID, &m.EventID, &m.VenueEventID,
+			&m.Title, &m.Description,
+			&m.Category, &m.Subcategory, &m.MarketType, &m.StructureType, &m.Status, &m.ResolutionDate,
+		); err != nil {
+			return nil, fmt.Errorf("scan batch market: %w", err)
+		}
+		result[m.ID] = m
+	}
+	return result, rows.Err()
+}
+
 func joinFloats(v []float64, sep string) string {
 	if len(v) == 0 {
 		return "[]"

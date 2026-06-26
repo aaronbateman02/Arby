@@ -13,6 +13,7 @@ const navItems = [
 
 const matchingSubItems = [
   { label: "Pipeline", href: "/matching/pipeline" },
+  { label: "Similarities", href: "/matching/similarities" },
   { label: "Review", href: "/matching/review" },
   { label: "Settings", href: "/matching/settings" },
 ]

@@ -316,6 +316,18 @@ func (h *Handler) GetPipelineCounts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(counts)
 }
 
+func (h *Handler) GetTopSimilarities(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pairs, err := h.store.GetTopSimilarities(ctx, 100)
+	if err != nil {
+		slog.Error("get top similarities", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(pairs)
+}
+
 func (h *Handler) GetEmbedScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/x-python")
 	w.Header().Set("Content-Disposition", "attachment; filename=embed_worker.py")
@@ -334,5 +346,6 @@ func (h *Handler) WireRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/matching/settings", h.PostSettings)
 	mux.HandleFunc("GET /api/v1/matching/stats", h.GetStats)
 	mux.HandleFunc("GET /api/v1/matching/pipeline-counts", h.GetPipelineCounts)
+	mux.HandleFunc("GET /api/v1/matching/top-similarities", h.GetTopSimilarities)
 	mux.HandleFunc("GET /api/v1/matching/embed-script", h.GetEmbedScript)
 }
