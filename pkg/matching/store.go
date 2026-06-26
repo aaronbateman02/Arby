@@ -735,13 +735,14 @@ type SimilarityPair struct {
 func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]SimilarityPair, error) {
 	rows, err := s.pg.P().Query(ctx, `
 		SELECT k_id, p_id, sim FROM (
-			SELECT k.id AS k_id, m.id AS p_id, 1 - (k.embedding <=> m.embedding) AS sim
+			SELECT k.id AS k_id, m.id AS p_id,
+				1 - (k.embedding <=> m.embedding) AS sim
 			FROM (SELECT id, embedding FROM markets WHERE venue='KALSHI' AND embedding IS NOT NULL ORDER BY random() LIMIT 100) k
 			CROSS JOIN LATERAL (
-				SELECT id FROM markets
+				SELECT id, embedding FROM markets
 				WHERE venue='POLYMARKET' AND embedding IS NOT NULL
 				  AND (resolution_date IS NULL OR resolution_date > NOW())
-				ORDER BY k.embedding <=> embedding
+				ORDER BY k.embedding <=> markets.embedding
 				LIMIT 1
 			) m
 		) sub
