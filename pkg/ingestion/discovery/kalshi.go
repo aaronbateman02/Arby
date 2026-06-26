@@ -33,6 +33,7 @@ func (c *KalshiClient) Venue() string { return "KALSHI" }
 type kalshiMarket struct {
 	Ticker          string    `json:"ticker"`
 	Title           string    `json:"title"`
+	Subtitle        string    `json:"subtitle"`
 	Sector          string    `json:"sector"`
 	Series          string    `json:"series"`
 	OpenTime        string    `json:"open_time"`
@@ -45,6 +46,7 @@ type kalshiMarket struct {
 	MveSelectedLegs []mveLeg  `json:"mve_selected_legs"`
 	MarketType      string    `json:"market_type"`
 	RulesPrimary    string    `json:"rules_primary"`
+	RulesSecondary  string    `json:"rules_secondary"`
 	YesSubTitle     string    `json:"yes_sub_title"`
 	NoSubTitle      string    `json:"no_sub_title"`
 }
@@ -72,6 +74,30 @@ func (c *KalshiClient) normalize(km kalshiMarket) Market {
 	return c.normalizeWithEvent(km, "")
 }
 
+func (c *KalshiClient) humanTitle(km kalshiMarket) string {
+	// Prefer subtitle (the specific market question) over title
+	if sub := strings.TrimSpace(km.Subtitle); sub != "" {
+		return sub
+	}
+	// Use title if it differs from the ticker (not a stub)
+	if t := strings.TrimSpace(km.Title); t != "" && t != km.Ticker {
+		return t
+	}
+	return km.Ticker
+}
+
+func (c *KalshiClient) fullDescription(km kalshiMarket) string {
+	primary := strings.TrimSpace(km.RulesPrimary)
+	secondary := strings.TrimSpace(km.RulesSecondary)
+	if primary != "" && secondary != "" {
+		return primary + "\n\n" + secondary
+	}
+	if secondary != "" {
+		return secondary
+	}
+	return primary
+}
+
 func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Market {
 	var openTime, closeTime time.Time
 	if km.OpenTime != "" {
@@ -87,7 +113,6 @@ func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Ma
 		series = strings.ToLower(tickerParts[0])
 	}
 
-	// Only set event fields when this is a real event market (not a bundle)
 	venueEventID := ""
 	if eventTitle != "" {
 		venueEventID = km.EventTicker
@@ -97,8 +122,8 @@ func (c *KalshiClient) normalizeWithEvent(km kalshiMarket, eventTitle string) Ma
 		Venue:        "KALSHI",
 		MarketID:     km.Ticker,
 		Ticker:       km.Ticker,
-		Title:        km.Title,
-		Description:  strings.TrimSpace(km.RulesPrimary),
+		Title:        c.humanTitle(km),
+		Description:  c.fullDescription(km),
 		Series:       series,
 		Category:     km.Sector,
 		VenueEventID: venueEventID,
