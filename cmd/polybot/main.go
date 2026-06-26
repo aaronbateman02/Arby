@@ -155,6 +155,7 @@ func main() {
 					VenueMarketID:  discMarket.MarketID,
 					EventID:        eventID,
 					VenueEventID:   discMarket.VenueEventID,
+					EventTitle:     discMarket.EventTitle,
 					Title:          discMarket.Title,
 					Description:    desc,
 					Category:       discMarket.Category,
