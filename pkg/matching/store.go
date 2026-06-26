@@ -99,6 +99,7 @@ func (s *Store) CreateTables(ctx context.Context) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_events_venue ON events(venue);
 	CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
+	CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
 
 	CREATE TABLE IF NOT EXISTS markets (
 		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,8 +124,12 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		UNIQUE (venue, venue_market_id)
 	);
 	CREATE INDEX IF NOT EXISTS idx_markets_venue ON markets(venue);
+	CREATE INDEX IF NOT EXISTS idx_markets_status ON markets(status);
+	CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category);
 	CREATE INDEX IF NOT EXISTS idx_markets_event ON markets(event_id);
-	CREATE INDEX IF NOT EXISTS idx_markets_embedding ON markets USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+	CREATE INDEX IF NOT EXISTS idx_markets_embedding ON markets USING ivfflat (embedding vector_cosine_ops) WITH (lists = 200);
+	CREATE INDEX IF NOT EXISTS idx_markets_needs_embedding ON markets (category, venue_market_id)
+		WHERE embedding IS NULL AND status = 'OPEN' AND description IS NOT NULL AND description != '';
 
 	CREATE TABLE IF NOT EXISTS match_candidates (
 		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -136,6 +141,8 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		UNIQUE (market_a_id, market_b_id)
 	);
+	CREATE INDEX IF NOT EXISTS idx_match_candidates_sim ON match_candidates (similarity DESC);
+	CREATE INDEX IF NOT EXISTS idx_match_candidates_cat_sim ON match_candidates (category, similarity DESC);
 
 	CREATE TABLE IF NOT EXISTS match_pairs (
 		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -150,6 +157,8 @@ func (s *Store) CreateTables(ctx context.Context) error {
 		approved_by     VARCHAR(100),
 		status          VARCHAR(20) NOT NULL DEFAULT 'PENDING_APPROVAL'
 	);
+	CREATE INDEX IF NOT EXISTS idx_match_pairs_status ON match_pairs(status);
+	CREATE INDEX IF NOT EXISTS idx_match_pairs_candidate ON match_pairs(candidate_id);
 
 	CREATE TABLE IF NOT EXISTS matching_config (
 		key   VARCHAR(100) PRIMARY KEY,
