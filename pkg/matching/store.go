@@ -260,6 +260,8 @@ func (s *Store) GetEmbeddedMarkets(ctx context.Context, limit int) ([]Market, er
 	SELECT id, venue, venue_market_id, COALESCE(event_id::text, ''), COALESCE(venue_event_id, ''), title, COALESCE(description, ''), COALESCE(category, ''), COALESCE(subcategory, ''), COALESCE(market_type, ''), structure_type, status, resolution_date
 	FROM markets
 	WHERE embedding IS NOT NULL
+	  AND status = 'OPEN'
+	  AND (resolution_date IS NULL OR resolution_date > NOW())
 	ORDER BY last_updated_at DESC
 	LIMIT $1`
 
