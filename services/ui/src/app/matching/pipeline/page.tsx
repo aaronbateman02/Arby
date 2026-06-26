@@ -16,6 +16,7 @@ interface CategoryCount {
   venue: string
   category: string
   count: number
+  embedded: number
 }
 
 interface PipelineCounts {
