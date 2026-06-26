@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -733,46 +734,67 @@ type SimilarityPair struct {
 }
 
 func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]SimilarityPair, error) {
+	// Use a sampled approach: pick up to 500 Kalshi markets and find their best Polymarket match
 	rows, err := s.pg.P().Query(ctx, `
-		WITH kalshi AS (
-			SELECT id, embedding FROM markets
-			WHERE venue='KALSHI' AND embedding IS NOT NULL
-			  AND (resolution_date IS NULL OR resolution_date > NOW())
-			LIMIT 5000
-		),
-		ranked AS (
-			SELECT k.id AS kid, m.id AS pid,
-				1 - (k.embedding <=> m.embedding) AS sim
-			FROM kalshi k
-			CROSS JOIN LATERAL (
-				SELECT id, embedding FROM markets
-				WHERE venue='POLYMARKET' AND embedding IS NOT NULL
-				  AND (resolution_date IS NULL OR resolution_date > NOW())
-				ORDER BY k.embedding <=> markets.embedding
-				LIMIT 5
-			) m
-		)
-		SELECT kid, pid, sim FROM ranked ORDER BY sim DESC LIMIT $1`, limit)
+		SELECT k.id, k.embedding FROM markets k
+		WHERE k.venue='KALSHI' AND k.embedding IS NOT NULL
+		  AND (k.resolution_date IS NULL OR k.resolution_date > NOW())
+		ORDER BY k.id
+		LIMIT 500`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("top similarities: %w", err)
+		return nil, fmt.Errorf("sample kalshi: %w", err)
 	}
 	defer rows.Close()
 
-	var pairs []SimilarityPair
+	type sample struct {
+		id  string
+		emb []float64
+	}
+	var samples []sample
 	for rows.Next() {
-		var p SimilarityPair
-		if err := rows.Scan(&p.MarketAID, &p.MarketBID, &p.Similarity); err != nil {
-			return nil, fmt.Errorf("scan similarity: %w", err)
+		var s sample
+		if err := rows.Scan(&s.id, &s.emb); err != nil {
+			return nil, err
 		}
-		pairs = append(pairs, p)
+		samples = append(samples, s)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
+	var allPairs []SimilarityPair
+	for _, s := range samples {
+		rows2, err := s.pg.P().Query(ctx, `
+			SELECT id, 1 - ($1 <=> embedding) AS sim
+			FROM markets
+			WHERE venue='POLYMARKET' AND embedding IS NOT NULL
+			  AND (resolution_date IS NULL OR resolution_date > NOW())
+			ORDER BY $1 <=> embedding
+			LIMIT 3`, s.emb)
+		if err != nil {
+			continue
+		}
+		for rows2.Next() {
+			var pid string
+			var sim float64
+			if err := rows2.Scan(&pid, &sim); err != nil {
+				rows2.Close()
+				break
+			}
+			allPairs = append(allPairs, SimilarityPair{MarketAID: s.id, MarketBID: pid, Similarity: sim})
+		}
+		rows2.Close()
+	}
+
+	// Sort by similarity and take top
+	sort.Slice(allPairs, func(i, j int) bool { return allPairs[i].Similarity > allPairs[j].Similarity })
+	if len(allPairs) > limit {
+		allPairs = allPairs[:limit]
+	}
+
 	// Batch-load market details
 	idSet := make(map[string]bool)
-	for _, p := range pairs {
+	for _, p := range allPairs {
 		idSet[p.MarketAID] = true
 		idSet[p.MarketBID] = true
 	}
@@ -784,12 +806,12 @@ func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]Similarity
 	if err != nil {
 		return nil, err
 	}
-	for i := range pairs {
-		pairs[i].MarketA = markets[pairs[i].MarketAID]
-		pairs[i].MarketB = markets[pairs[i].MarketBID]
+	for i := range allPairs {
+		allPairs[i].MarketA = markets[allPairs[i].MarketAID]
+		allPairs[i].MarketB = markets[allPairs[i].MarketBID]
 	}
 
-	return pairs, nil
+	return allPairs, nil
 }
 
 func (s *Store) batchGetMarkets(ctx context.Context, ids []string) (map[string]Market, error) {
