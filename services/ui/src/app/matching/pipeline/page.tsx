@@ -125,7 +125,9 @@ function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
   const venues = Array.from(new Set((data || []).map((d) => d.venue)))
   const categories = Array.from(new Set((data || []).map((d) => d.category)))
   const getCount = (venue: string, cat: string) => data.find((d) => d.venue === venue && d.category === cat)?.count ?? 0
+  const getEmbedded = (venue: string, cat: string) => data.find((d) => d.venue === venue && d.category === cat)?.embedded ?? 0
   const venueTotals = venues.map((v) => data.filter((d) => d.venue === v).reduce((sum, d) => sum + d.count, 0))
+  const venueEmbTotals = venues.map((v) => data.filter((d) => d.venue === v).reduce((sum, d) => sum + d.embedded, 0))
 
   return (
     <div className="bg-surface-alt rounded-xl border border-border overflow-hidden">
@@ -138,7 +140,16 @@ function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
             <tr className="border-b border-border">
               <th className="text-left px-5 py-2 text-muted font-medium">Category</th>
               {venues.map((v) => (
-                <th key={v} className="text-right px-4 py-2 text-muted font-medium">{v}</th>
+                <th key={v} className="text-right px-4 py-2 text-muted font-medium" colSpan={2}>{v}</th>
+              ))}
+            </tr>
+            <tr className="border-b border-border">
+              <th></th>
+              {venues.map((v) => (
+                <>
+                  <th key={v + "-emb"} className="text-right px-2 py-1 text-muted font-normal text-xs">Emb</th>
+                  <th key={v + "-tot"} className="text-right px-2 py-1 text-muted font-normal text-xs">Total</th>
+                </>
               ))}
             </tr>
           </thead>
@@ -147,9 +158,10 @@ function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
               <tr key={cat} className="border-b border-border/50 last:border-0">
                 <td className="px-5 py-1.5 text-gray-300">{cat}</td>
                 {venues.map((v) => (
-                  <td key={v} className="text-right px-4 py-1.5 text-gray-200 tabular-nums">
-                    {getCount(v, cat).toLocaleString()}
-                  </td>
+                  <>
+                    <td key={v + "-emb"} className="text-right px-2 py-1.5 text-green tabular-nums">{getEmbedded(v, cat).toLocaleString()}</td>
+                    <td key={v + "-tot"} className="text-right px-2 py-1.5 text-gray-200 tabular-nums">{getCount(v, cat).toLocaleString()}</td>
+                  </>
                 ))}
               </tr>
             ))}
@@ -157,10 +169,11 @@ function CountTable({ title, data }: { title: string; data: CategoryCount[] }) {
           <tfoot>
             <tr className="border-t border-border bg-white/5">
               <td className="px-5 py-2 font-medium text-gray-200">Total</td>
-              {venueTotals.map((t, i) => (
-                <td key={i} className="text-right px-4 py-2 font-semibold text-gray-100 tabular-nums">
-                  {t.toLocaleString()}
-                </td>
+              {venues.map((v, i) => (
+                <>
+                  <td key={v + "-emb"} className="text-right px-2 py-2 font-semibold text-green tabular-nums">{venueEmbTotals[i].toLocaleString()}</td>
+                  <td key={v + "-tot"} className="text-right px-2 py-2 font-semibold text-gray-100 tabular-nums">{venueTotals[i].toLocaleString()}</td>
+                </>
               ))}
             </tr>
           </tfoot>

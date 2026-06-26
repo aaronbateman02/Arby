@@ -656,6 +656,7 @@ type CategoryCount struct {
 	Venue    string `json:"venue"`
 	Category string `json:"category"`
 	Count    int    `json:"count"`
+	Embedded int    `json:"embedded"`
 }
 
 type PipelineCounts struct {
@@ -705,14 +706,14 @@ func (s *Store) GetPipelineCounts(ctx context.Context) (*PipelineCounts, error) 
 	}
 
 	rows2, err := s.pg.P().Query(ctx,
-		`SELECT venue, COALESCE(category, 'Uncategorized'), COUNT(1) FROM markets WHERE status = 'OPEN' GROUP BY venue, category ORDER BY venue, category`)
+		`SELECT venue, COALESCE(category, 'Uncategorized'), COUNT(1), COUNT(1) FILTER (WHERE embedding IS NOT NULL) FROM markets WHERE status = 'OPEN' GROUP BY venue, category ORDER BY venue, category`)
 	if err != nil {
 		return nil, fmt.Errorf("get market counts: %w", err)
 	}
 	defer rows2.Close()
 	for rows2.Next() {
 		var cc CategoryCount
-		if err := rows2.Scan(&cc.Venue, &cc.Category, &cc.Count); err != nil {
+		if err := rows2.Scan(&cc.Venue, &cc.Category, &cc.Count, &cc.Embedded); err != nil {
 			return nil, err
 		}
 		pc.Markets = append(pc.Markets, cc)
