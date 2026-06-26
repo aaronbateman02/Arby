@@ -7,7 +7,6 @@ import (
 	"math"
 	"strings"
 	"time"
-	"unicode"
 )
 
 type annResult struct {
@@ -148,84 +147,8 @@ func indexByID(markets []Market) map[string]Market {
 	return m
 }
 
-// compositeSimilarity combines embedding similarity, keyword overlap, category/subcategory/market_type
-// alignment, and date proximity into a single score between 0 and 1.
 func compositeSimilarity(a, b Market, embeddingSim float64) float64 {
-	kw := keywordJaccard(a.Title+" "+a.Description, b.Title+" "+b.Description)
-	cat := boolToFloat(a.Category != "" && a.Category == b.Category)
-	sub := boolToFloat(a.Subcategory != "" && a.Subcategory == b.Subcategory)
-	mt := boolToFloat(a.MarketType != "" && a.MarketType == b.MarketType)
-	dt := dateProximityScore(a.ResolutionDate, b.ResolutionDate)
-
-	return embeddingSim*0.25 + kw*0.25 + cat*0.15 + sub*0.10 + mt*0.10 + dt*0.15
-}
-
-func boolToFloat(v bool) float64 {
-	if v {
-		return 1.0
-	}
-	return 0.0
-}
-
-// keywordJaccari computes Jaccard similarity of cleaned word tokens.
-func keywordJaccard(s1, s2 string) float64 {
-	t1 := tokenize(s1)
-	t2 := tokenize(s2)
-	if len(t1) == 0 && len(t2) == 0 {
-		return 0.0
-	}
-	set1 := make(map[string]struct{}, len(t1))
-	for _, w := range t1 {
-		set1[w] = struct{}{}
-	}
-	intersection := 0
-	for _, w := range t2 {
-		if _, ok := set1[w]; ok {
-			intersection++
-			delete(set1, w)
-		}
-	}
-	union := len(t1) + len(t2) - intersection
-	if union == 0 {
-		return 0.0
-	}
-	return float64(intersection) / float64(union)
-}
-
-// tokenize splits text into lowercase word tokens, dropping punctuation and short words.
-func tokenize(s string) []string {
-	var tokens []string
-	var buf []rune
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			buf = append(buf, r)
-		} else {
-			if len(buf) >= 2 {
-				tokens = append(tokens, string(buf))
-			}
-			buf = buf[:0]
-		}
-	}
-	if len(buf) >= 2 {
-		tokens = append(tokens, string(buf))
-	}
-	return tokens
-}
-
-// dateProximityScore returns 1.0 if same day, decaying to 0 at 30 days apart.
-func dateProximityScore(da, db *time.Time) float64 {
-	if da == nil || db == nil {
-		return 0.0
-	}
-	diff := da.Sub(*db)
-	if diff < 0 {
-		diff = -diff
-	}
-	days := diff.Hours() / 24
-	if days >= 30 {
-		return 0.0
-	}
-	return 1.0 - days/30.0
+	return embeddingSim
 }
 
 func (d *CandidateDiscoverer) queryANN(ctx context.Context, marketID, venue, category, subcategory, marketType string, limit int) ([]annResult, error) {
