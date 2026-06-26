@@ -763,14 +763,14 @@ func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]Similarity
 	}
 
 	var allPairs []SimilarityPair
-	for _, s := range samples {
+	for _, sm := range samples {
 		rows2, err := s.pg.P().Query(ctx, `
 			SELECT id, 1 - ($1 <=> embedding) AS sim
 			FROM markets
 			WHERE venue='POLYMARKET' AND embedding IS NOT NULL
 			  AND (resolution_date IS NULL OR resolution_date > NOW())
 			ORDER BY $1 <=> embedding
-			LIMIT 3`, s.emb)
+			LIMIT 3`, sm.emb)
 		if err != nil {
 			continue
 		}
@@ -781,7 +781,7 @@ func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]Similarity
 				rows2.Close()
 				break
 			}
-			allPairs = append(allPairs, SimilarityPair{MarketAID: s.id, MarketBID: pid, Similarity: sim})
+			allPairs = append(allPairs, SimilarityPair{MarketAID: sm.id, MarketBID: pid, Similarity: sim})
 		}
 		rows2.Close()
 	}
