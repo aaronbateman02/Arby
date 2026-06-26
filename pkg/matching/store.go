@@ -740,7 +740,7 @@ func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]Similarity
 		WHERE k.venue='KALSHI' AND k.embedding IS NOT NULL
 		  AND (k.resolution_date IS NULL OR k.resolution_date > NOW())
 		ORDER BY k.id
-		LIMIT 500`, limit)
+		LIMIT 100`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("sample kalshi: %w", err)
 	}
@@ -770,7 +770,7 @@ func (s *Store) GetTopSimilarities(ctx context.Context, limit int) ([]Similarity
 			WHERE venue='POLYMARKET' AND embedding IS NOT NULL
 			  AND (resolution_date IS NULL OR resolution_date > NOW())
 			ORDER BY $1 <=> embedding
-			LIMIT 3`, sm.emb)
+			LIMIT 1`, sm.emb)
 		if err != nil {
 			continue
 		}
